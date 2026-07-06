@@ -29,8 +29,12 @@ ThetaBet is a social network where:
 - No fees, no whitelists, no production polish in scope for now — this is a testnet MVP that
   proves the integration chain: **Pear chat → WDK wallet → singleton/vault contracts → Azuro**.
 
-The long-term target is a **React Native** mobile app. For now we layer dev phases on desktop
-first (Pear runs on Electron + Bare; WDK runs on Bare/Node/RN; both compose inside one Pear app).
+The target is a **React Native (Expo)** mobile app on Android, developed from WSL2 on Windows.
+We go **RN-first** (not desktop-Electron-first). P2P runs in a **Bare worklet** via
+`react-native-bare-kit` (the Pear/Holepunch "Pear-end"), and the wallet runs in a second Bare
+worklet via **WDK React Native Core**. Fast iteration on WSL uses a one-time **local** dev-client
+build + a physical device over USB (`usbipd-win`)/ADB, then Metro HMR (see §13). **No EAS** —
+local build + USB cable + `adb` only.
 
 ---
 
@@ -38,10 +42,10 @@ first (Pear runs on Electron + Bare; WDK runs on Bare/Node/RN; both compose insi
 
 | Term | Meaning |
 | --- | --- |
-| **Pear** | Holepunch P2P runtime: Electron renderer + Bare worker(s). Used for chat and as the host for WDK. |
-| **Bare** | Pear's JS runtime that runs workers (where native modules like Hyperswarm/Hypercore live). |
-| **WDK** | Tether Wallet Development Kit. Self-custodial, stateless, BIP-39/44, modular. Runs on Bare/Node/RN. |
-| **Pear Worklet** | A Bare worklet (lighter than a worker) used to host WDK inside the Pear app process. |
+| **Pear** | Holepunch P2P stack (Hyperswarm/Hypercore/Corestore). On mobile it runs in a Bare worklet via `react-native-bare-kit` (the "Pear-end"), not the Electron runtime. |
+| **Bare** | Holepunch's embeddable JS runtime; runs native P2P modules. Hermes (RN's JS engine) can't do UDP/P2P, so P2P lives in Bare. |
+| **Bare Kit / worklet** | `react-native-bare-kit` spawns an isolated Bare thread (worklet) inside the RN app; the UI talks to it via `bare-rpc`. |
+| **WDK** | Tether Wallet Development Kit. Self-custodial, stateless, BIP-39/44, modular. On RN via `@tetherto/wdk-react-native-core` (engine in a Bare worklet). |
 | **Tipster** | Creator of a vault + channel; the only role allowed to trigger bets on their vault. |
 | **Fan** | User who deposits into a vault and holds that vault's share token. |
 | **Singleton (Master)** | One contract that **custodies all funds**, is a **vault factory**, and is the **only entity that talks to Azuro**. |
@@ -56,7 +60,9 @@ first (Pear runs on Electron + Bare; WDK runs on Bare/Node/RN; both compose insi
 ## 3. Non-Goals (for now)
 
 - **Privacy / mix pool** (Railgun-like shielding of bets into vaults) — owner will handle later (Phase 4).
-- **React Native mobile build** — desktop-first now; Expo/RN comes after desktop integration is proven.
+- **Desktop Electron app** — we go straight to Expo RN; no Electron/Pear-desktop build.
+- **iOS** — Android-first (WSL/ADB workflow); iOS later when a macOS build host is available.
+- **Android emulator on WSL2** — nested-virt is painful; we use a **physical device over USB** via `usbipd-win` + ADB.
 - **Fees / revenue** — no performance, management, or subscription fees in the MVP.
 - **Tipster whitelisting / staking / slashing** — vault creation is permissionless.
 - **Production hardening** — no audited security, no multisig, no mainnet, no real funds.
@@ -69,50 +75,50 @@ first (Pear runs on Electron + Bare; WDK runs on Bare/Node/RN; both compose insi
 
 ## 4. Technology Stack (confirmed)
 
-### 4.1 P2P / App runtime — Pear (mandatory)
+### 4.1 P2P / App runtime — Pear (mandatory, on mobile via Bare Kit)
 
-- `pear-runtime` — embeds Bare worker(s) inside the Electron host.
+The app is a **React Native (Expo)** app. Pear/Holepunch P2P modules run in a **Bare worklet**,
+not the Electron runtime (Hermes can't do UDP/low-level P2P). Pear officially documents this
+mobile path ("Making a Bare mobile app", template `holepunchto/bare-expo`).
+
+- `react-native-bare-kit` — `Worklet` class spawns the isolated Bare thread (the "Pear-end")
+  where P2P lives; IPC stream back to RN.
+- `bare-rpc` — typed RPC on top of the Bare Kit IPC stream (UI ↔ worklet bridge).
+- `bare-pack` (`--linked`) — bundles the P2P logic + native addons into one `*.bundle.mjs`
+  loaded by the worklet. Rebuild only when worklet code changes (seconds), not per JS edit.
 - `hyperswarm` — DHT peer discovery + E2E-encrypted connections on a topic key.
 - `hypercore` — append-only log (per-channel message history).
-- `corestore` — storage factory for hypercores (persistence).
+- `corestore` — storage factory for hypercores (persistence under the app's document directory).
 - `b4a` — binary buffer helpers.
-- `electron` (dev) — renderer host.
-- Template reference: `hello-pear-electron` (Holepunch). Docs: https://docs.pears.com
+- Template reference: `holepunchto/bare-expo` (Expo + Bare). Docs: https://docs.pears.com
+  (guide: "Making a Bare mobile app").
 
-### 4.2 Wallet — WDK by Tether (mandatory)
+### 4.2 Wallet — WDK by Tether (mandatory, on RN via React Native Core)
 
-Core + EVM module (runs on Bare / Node / RN; supports **Polygon Amoy** explicitly):
+WDK engine runs in a **second Bare worklet** (also `react-native-bare-kit`), exposed to RN through
+hooks. Supports **Polygon Amoy** explicitly.
 
-- `@tetherto/wdk` — core orchestrator. `new WDK(seedPhrase)`, `WDK.getRandomSeedPhrase(24)`,
-  `wdk.registerWallet(name, Module, config)`, `wdk.getAccount(name, index)`.
-- `@tetherto/wdk-wallet-evm` — EVM wallet module: BIP-39 seed (12/24-word), BIP-44 `m/44'/60'/0'/0/x`,
-  ethers.js HD wallet, EIP-1559 fees, offline `signTransaction`, ERC-20 balances.
-  API surface used in Phase 2: `getAccount(index)`, `getAddress(index)`, `getBalance(index)`,
-  `getTokenBalance(index, tokenAddress)`, `getTokenBalances(...)`, `sendTransaction(params)`,
-  `estimateTransaction(params)`, `signMessage(message, index)`, `verifySignature(...)`,
-  `getTransactionHistory(index, limit)`. Provider = JSON-RPC URL / EIP-1193 / failover list.
+- `@tetherto/wdk-react-native-core` — `WdkAppProvider` + hooks (`useWdkApp`, `useWalletManager`,
+  `useAccount`, `useBalance`, `useBalancesForWallets`, …), TanStack Query caching, Zustand+MMKV
+  persisted state, biometric secure storage, multi-wallet (create/restore/lock/unlock/delete).
+- `@tetherto/wdk` — core orchestrator (`WDK.getRandomSeedPhrase(24)`, `registerWallet`, …).
+- `@tetherto/wdk-wallet-evm` — standard EVM module: BIP-39 (12/24-word), BIP-44 `m/44'/60'/0'/0/x`,
+  ethers.js HD wallet, EIP-1559, ERC-20 balances, `signMessage`, `getTransactionHistory`.
+  (The bundler's example uses `@tetherto/wdk-wallet-evm-erc-4337` for account-abstracted/gasless
+  wallets — **optional later**; for the Amoy MVP use the standard EVM module. Confirm the bundler
+  accepts the standard module at impl time; if not, fall back to erc-4337 in standard mode.)
+- `@tetherto/wdk-worklet-bundler` (dev dep) — generate a custom EVM-only bundle:
+  `wdk-worklet-bundler init` → `wdk.config.js` (`modules` + `networks` with `polygonAmoy`:
+  `chainId 80002`, Amoy RPC) → `generate` → `.wdk/bundle.js`.
+- `@tetherto/pear-wrk-wdk` — optional **prebuilt bundle** (`import { bundle } from ...`) for quick
+  prototyping (all modules, larger); same `pear-wrk-wdk` worklet primitives the RN core uses
+  under the hood.
 
-Pear Worklet hosting (this is how WDK lives inside the Pear app):
+Provider for Amoy = JSON-RPC URL (e.g. `https://rpc-amoy.polygon.technology`); history via WDK
+indexer, with PolygonScan Amoy / viem fallback if Amoy isn't covered.
 
-- `@tetherto/pear-wrk-wdk` (v1.0.0-beta.x) — foundational infra for running WDK inside a **Bare Worklet**.
-  Worklet side: `require('@tetherto/pear-wrk-wdk/worklet').registerRpcHandlers`. Host side:
-  `require('@tetherto/pear-wrk-wdk').HRPC` + `bare-ipc`. Also exports a **prebuilt bundle**
-  (`import { bundle } from '@tetherto/pear-wrk-wdk'`) for quick prototyping (all modules, larger).
-- `@tetherto/wdk-worklet-bundler` (dev dep) — CLI to generate a **custom EVM-only bundle**
-  (`wdk-worklet-bundler init` → `wdk.config.js` → `generate` → `.wdk/bundle.js`) so we ship only
-  the EVM module for Amoy. Used after prototyping.
-- `@tetherto/wdk-react-native-core` — RN hooks (`useWalletManager`, `useAccount`, `useBalance`, …),
-  TanStack Query + Zustand/MMKV + biometrics. **Deferred to the mobile (Expo/RN) phase** — not used
-  in the desktop Pear app, where we wire our own preload-bridge RPC over HRPC.
-
-> Note: `pear-wrk-wdk` is documented around the RN Bare Kit runtime, but the worklet/HRPC
-> primitives are Bare-runtime-agnostic. For the desktop Pear app we spawn the worklet from the
-> Electron main via Pear/Bare Kit, connect over HRPC + `bare-ipc`, and expose it to the renderer
-> through the preload bridge (same pattern as the chat worker). Confirm the exact Pear desktop
-> worklet-spawn API during implementation; fallback is a dedicated Bare **worker** with the same
-> HRPC primitives (no API change on the wallet side).
-
-- Docs: https://docs.wdk.tether.io · GitHub: `tetherto/pear-wrk-wdk`, `tetherto/wdk-worklet-bundler`
+- Docs: https://docs.wdk.tether.io/tools/react-native-core/ · GitHub: `tetherto/wdk-react-native-core`,
+  `tetherto/wdk-worklet-bundler`, `tetherto/pear-wrk-wdk`
 
 ### 4.3 Betting — Azuro v3.0.13 on Polygon Amoy
 
@@ -161,11 +167,17 @@ off-chain feed/odds/calc side (UI) still uses `@azuro-org/toolkit` helpers (`get
 ### 4.4 Tooling
 
 - **pnpm workspaces** — monorepo.
+- **Expo + React Native** (`expo`, `expo-dev-client`) — mobile app; `react-native-bare-kit` for
+  Bare worklets; `bare-pack` / `@tetherto/wdk-worklet-bundler` for worklet bundles.
+- **Local native build** — `npx expo run:android` (`expo prebuild` + Gradle `assembleDebug`) +
+  `expo-dev-client` for the custom dev build with native modules. One-time heavy build, then
+  cached. **No EAS** — build and install locally over USB/`adb`.
 - **Foundry** (`forge`, `cast`, `anvil`) — Solidity contracts, tests, local fork of Amoy.
-- **TypeScript** end-to-end (Pear + WDK are TS).
+- **TypeScript** end-to-end (RN + Pear/Bare + WDK are TS).
 - `viem` (^2.37.4, also required by `@azuro-org/toolkit`) / `ethers` (via WDK EVM module) —
   contract reads/writes, ABI decoding, Azuro toolkit helpers.
-- Node/Bare via Pear toolchain.
+- **WSL2 dev bridge**: `usbipd-win` (Windows) to attach the phone to WSL + `adb`; Metro packager
+  in WSL; `adb reverse tcp:8081 tcp:8081` so the device reaches Metro. See §13 (Dev workflow).
 
 ---
 
@@ -173,20 +185,21 @@ off-chain feed/odds/calc side (UI) still uses `@azuro-org/toolkit` helpers (`get
 
 ```
                 ┌───────────────────────────────────────────────────────┐
-                │                   Pear App (Electron)                 │
-                │  ┌───────────────┐   ┌───────────────┐               │
-                │  │  Renderer (UI)│──▶│  Preload bridge│              │
-                │  └───────────────┘   └───────────────┘               │
-                │          │                    │                        │
-                │          │      IPC (FramedStream / worklet)          │
-                │          ▼                    ▼                        │
-                │  ┌──────────────────┐  ┌──────────────────────┐      │
-                │  │ Bare worker:     │  │ Bare worklet: WDK     │      │
-                │  │ P2P chat         │  │ wallet (EVM, Amoy)    │      │
-                │  │ Hyperswarm +     │  │ BIP-39/44, sign,      │      │
-                │  │ Hypercore +      │  │ send, history, token  │      │
-                │  │ Corestore        │  │ gating checks         │      │
-                │  └──────────────────┘  └──────────────────────┘      │
+                │              Expo React Native app (Android)          │
+                │  ┌──────────────────────────────────────────────┐    │
+                │  │  RN UI (Hermes): chat + wallet + vaults/tipster│   │
+                │  └──────────────────────────────────────────────┘    │
+                │          │ bare-rpc                  │ WDK hooks      │
+                │          ▼                            ▼                │
+                │  ┌──────────────────────┐  ┌──────────────────────┐  │
+                │  │ Bare worklet #1:     │  │ Bare worklet #2:     │  │
+                │  │ Pear-end (P2P chat)  │  │ WDK wallet (EVM,     │  │
+                │  │ Hyperswarm +         │  │  Amoy), BIP-39/44,   │  │
+                │  │ Hypercore +          │  │  sign, send, history,│  │
+                │  │ Corestore            │  │  token, gating check │  │
+                │  │ (react-native-bare-  │  │ (react-native-bare-  │  │
+                │  │  kit + bare-pack)    │  │  kit + wdk bundle)   │  │
+                │  └──────────────────────┘  └──────────────────────┘  │
                 └───────────────┬───────────────────┬───────────────────┘
                                 │ JSON-RPC (Amoy)   │
                                 ▼                   ▼
@@ -230,12 +243,15 @@ thetabet/
 ├─ package.json
 ├─ tsconfig.base.json
 ├─ apps/
-│  └─ pear-app/                 # Electron + Bare worker(s) + WDK worklet (Phases 1–3)
-│     ├─ electron/              # main + preload bridge
-│     ├─ renderer/              # UI (chat + wallet screens)
-│     ├─ workers/chat/          # Bare worker: Hyperswarm + Hypercore + Corestore
-│     ├─ worklets/wallet/       # Bare worklet: WDK EVM wallet (entry + .wdk/bundle.js)
-│     └─ pear.json/             # Pear app manifest + release config
+│  └─ mobile/                   # Expo React Native app (Phases 1–3)
+│     ├─ app/                   # RN screens: chat, wallet, vaults, tipster
+│     ├─ pear-end/              # P2P chat logic (Hyperswarm/Hypercore/Corestore)
+│     ├─ pear-end.bundle.mjs    # bare-pack output (chat worklet bundle)
+│     ├─ wdk.config.js          # WDK worklet bundler config (polygonAmoy)
+│     ├─ .wdk/bundle.js         # wdk-worklet-bundler output (WDK worklet bundle)
+│     ├─ rpc/                   # bare-rpc handlers (chat) + WDK hooks wiring
+│     ├─ app.json               # Expo config (no eas.json — no EAS)
+│     └─ babel.config.js / metro.config.js
 ├─ packages/
 │  ├─ contracts-abis/           # generated ABIs + addresses from Foundry (TS)
 │  ├─ azuro-client/             # thin wrapper over @azuro-org/toolkit + LP ABI helpers
@@ -255,123 +271,118 @@ thetabet/
 
 ---
 
-## 7. Phase 1 — Pear P2P Chat (localhost-first, then package)
+## 7. Phase 1 — Pear P2P Chat (RN + Bare worklet, on-device)
 
-**Goal:** a dyne.org/Keet-style P2P chat that runs locally between multiple peers, persists
-messages, and is packaged as a Pear app. This is the foundation the wallet and contracts will
-plug into.
+**Goal:** a dyne.org/Keet-style P2P chat running on the Android device, where the P2P stack
+(Hyperswarm/Hypercore/Corestore) lives in a **Bare worklet** via `react-native-bare-kit`. This is
+the foundation the wallet and contracts plug into.
 
-### 7.1 Scope (confirmed: channels + persistence + packaging)
+### 7.1 Scope (confirmed: channels + persistence; packaged = the Expo dev-client build)
 
 - Multiple **tipster channels**, each a Hyperswarm **topic** (32-byte key).
 - **Public channel** (announced topic) for discovery + a per-tipster **private channel**
   (unannounced topic, shared key only). Private gating (token-gating) is wired in Phase 3;
   here we only build the key-sharing plumbing.
-- **Persistence** via Corestore + Hypercore (one append-only core per channel; replicate on join).
-- **Per-user identity** = a long-lived Ed25519/HD key stored by Pear; displayed as a short pubkey
-  handle. (Wallet linking is optional and added in Phase 3.)
-- **Packaging** via the Pear release pipeline (`pear build` / stage → release line) so the app
-  can be installed and run by another peer on the same machine/LAN.
+- **Persistence** via Corestore + Hypercore under the app's document directory
+  (`expo-file-system` `documentDirectory`); one append-only core per channel; replicate on join.
+- **Per-user identity** = a long-lived Ed25519 key generated/stored in the Bare worklet; shown as a
+  short pubkey handle. (Wallet linking is optional and added in Phase 3.)
+- **"Packaging"** = the Expo **dev-client** build (local, one-time via `npx expo run:android`)
+  installed on the device; further iteration is Metro HMR (no per-change native rebuild).
 
-### 7.2 Worker responsibilities (`apps/pear-app/workers/chat/`)
+### 7.2 Pear-end worklet (`apps/mobile/pear-end/`, bundled via `bare-pack --linked`)
 
-- Open `Corestore(Pear.storage)`.
-- Maintain a directory of channels: `{ topicKey, name, ownerPubkey, isPrivate, shareKey? }`.
-- For each joined channel: `hyperswarm.join(topic)`, replicate the channel's Hypercore,
-  append outbound messages, emit inbound messages over IPC to the renderer.
-- Expose a FramedStream IPC bridge (`window.bridge`):
+- Open `Corestore(documentDirectory + '/pear-end')`.
+- Maintain a channel directory: `{ topicKey, name, ownerPubkey, isPrivate, shareKey? }`.
+- For each joined channel: `hyperswarm.join(topic)`, replicate the channel's Hypercore, append
+  outbound messages, emit inbound messages over the IPC stream.
+- Expose a `bare-rpc` surface to RN:
   - `createChannel(name, isPrivate) → channelId`
   - `joinChannel(channelId) → history[]`
   - `sendMessage(channelId, text)`
   - `onMessage(channelId, cb)`
   - `shareChannelKey(channelId, peerPubkey)` / `receiveChannelKey(...)`
 
-### 7.3 Renderer
+### 7.3 RN UI
 
-- Minimal UI: channel list, message view, composer, identity badge.
-- No wallet UI yet (Phase 2 adds a "Wallet" pane).
+- Screens: channel list, message view, composer, identity badge.
+- `Worklet` from `react-native-bare-kit` loads `pear-end.bundle.mjs`; `bare-rpc` for calls/events.
+- No wallet UI yet (Phase 2 adds wallet screens).
 
 ### 7.4 Acceptance
 
-- Two peers on the same machine (two Pear instances / two keys) exchange messages in real time.
-- Restarting an app replays persisted history from Corestore.
+- Two peers exchange messages in real time. Localhost testing without a second phone: run a
+  **Node/Bare peer on WSL** using the **same** `pear-end` bundle on the same topic — phone ↔ WSL
+  peer validates P2P end-to-end. (Two phones also work.)
+- Restarting the app replays persisted history from Corestore.
 - A private channel is unreadable to a peer who was never given the topic key.
-- `pear build` produces an installable package that another peer can run and connect with.
+- The dev-client build installs and runs on the physical device over ADB.
 
 ### 7.5 Phase 1 tasks
 
-1. Scaffold from `hello-pear-electron`; wire `window.bridge` + worker IPC.
-2. Implement Corestore-backed channel directory + Hypercore per channel.
-3. Hyperswarm join/announce; message append + replication + IPC fan-out.
+1. `expo init` (with `expo-dev-client`); add `react-native-bare-kit`, `bare-rpc`, `bare-pack`.
+2. Write `pear-end/` (Corestore + Hypercore + Hyperswarm); bundle with `bare-pack --linked`.
+3. `bare-rpc` surface + RN screens (channel list / messages / composer).
 4. Identity key generation + persistence + short-handle display.
 5. Private channel key-exchange plumbing (manual key pass for now).
-6. Local multi-peer smoke test (≥2 instances).
-7. Package with Pear release pipeline; verify install + reconnect.
+6. One-time local `npx expo run:android` build → install on device; Metro + `adb reverse`.
+7. Multi-peer smoke test: phone ↔ WSL Node peer on the same topic; verify persistence + privacy.
 
 ---
 
-## 8. Phase 2 — WDK Wallet in a Pear Worklet
+## 8. Phase 2 — WDK Wallet (React Native Core, on-device)
 
-**Goal:** a minimal self-custodial wallet for **Polygon Amoy only**, running inside the Pear app
-as a **Bare worklet** (WDK Pear Worklet), reachable from the renderer via the bridge. No contracts
-yet — just a working wallet that can receive, transfer, show history, and generate accounts.
+**Goal:** a minimal self-custodial wallet for **Polygon Amoy only**, running via **WDK React Native
+Core** (engine in a second Bare worklet), exposed to RN through hooks. No contracts yet — just a
+working wallet that can receive, transfer, show history, and generate accounts.
 
 ### 8.1 Scope
 
-- **Self-custody**: BIP-39 mnemonic generated on first run, stored encrypted by Pear (device-side),
-  private keys never leave the worklet.
+- **Self-custody**: BIP-39 mnemonic generated on first run, stored encrypted on-device (MMKV +
+  biometrics via WDK RN core); private keys never leave the WDK worklet.
 - **BIP-44** derivation `m/44'/60'/0'/0/x` (EVM, via `@tetherto/wdk-wallet-evm`).
-- **Polygon Amoy only** for now (single chain registration).
+- **Polygon Amoy only** (single network in `wdk.config.js`).
 - Asset: native MATIC (for gas) + the Azuro **Bet Token** (`0xCf1b86ce...`) for transfers/history.
-- **Features**: create/import wallet, derive account(s), show address + QR (receive),
+- **Features**: create/import wallet, lock/unlock, derive account(s), show address + QR (receive),
   transfer (native + Bet Token), transaction history, balances.
-- UI: a "Wallet" pane in the renderer next to the chat pane.
+- UI: wallet screens in RN next to the chat screens.
 
-### 8.2 Worklet responsibilities (`apps/pear-app/worklets/wallet/`)
+### 8.2 WDK integration (`apps/mobile/`, via `@tetherto/wdk-react-native-core`)
 
-Worklet entry (`worklet.js`) — runs inside the Bare worklet:
-
-- `require('@tetherto/pear-wrk-wdk/worklet').registerRpcHandlers` to expose handlers over HRPC.
-- `new WDK(seed)` + `wdk.registerWallet('polygonAmoy', WalletManagerEvm, { provider: <Amoy RPC>, chainId: 80002 })`.
-- Load the WDK bundle: prototype with the **prebuilt bundle** from `@tetherto/pear-wrk-wdk`;
-  later generate an **EVM-only bundle** via `@tetherto/wdk-worklet-bundler`
-  (`wdk-worklet-bundler init` → `wdk.config.js { networks: { polygonAmoy: { package: '@tetherto/wdk-wallet-evm' } } }` → `generate` → `.wdk/bundle.js`).
-
-Host side (Electron main) — spawns the worklet and connects:
-
-- `const { HRPC } = require('@tetherto/pear-wrk-wdk')` + `bare-ipc` to open an HRPC channel to the worklet.
-- Relay calls through the preload `window.bridge` (same FramedStream pattern as the chat worker).
-
-Wallet RPC surface (exposed to renderer):
-- `walletCreate()` / `walletImport(mnemonic)` / `walletLock()` / `walletUnlock(password)`
-- `getAccount(index)` → `{ address, path }` (BIP-44 `m/44'/60'/0'/0/index`)
-- `getBalance(index)` → native MATIC + `getTokenBalance(index, BET_TOKEN)` for the Azuro Bet Token
-- `getHistory(index)` → tx list (WDK `getTransactionHistory`; if Amoy isn't covered by the WDK
-  indexer, fall back to PolygonScan Amoy API / viem `getBlock` scan)
-- `sendTx({ index, to, amount, asset })` → `sendTransaction` (native) or ERC-20 transfer
-- `signMessage({ index, message })` → EIP-191 personal_sign, used later for token-gating proofs
+- Wrap the app in `<WdkAppProvider bundle={{ bundle }} wdkConfigs={configs}>` — `bundle` from
+  `.wdk/bundle.js` (generated) or the prebuilt `@tetherto/pear-wrk-wdk` bundle for prototyping.
+- `wdk.config.js`: `modules: { core: '@tetherto/wdk', evm: '@tetherto/wdk-wallet-evm' }` and
+  `networks: { polygonAmoy: { module: 'evm', chainId: 80002, blockchain: 'polygon', provider: <Amoy RPC> } }`.
+  (If the bundler requires the erc-4337 module, use `@tetherto/wdk-wallet-evm-erc-4337` in standard
+  non-AA mode — confirm at impl time.)
+- Hooks used: `useWdkApp` (state: INITIALIZING/NO_WALLET/LOCKED/READY/ERROR),
+  `useWalletManager` (create/restore/lock/unlock), `useAccount({ network: 'polygonAmoy', accountIndex })`
+  (address, send, sign, verify, estimateFee), `useBalance` / `useBalancesForWallets`.
+- Bet Token balance: `useBalance` with the Bet Token address, or a custom read via `viem`
+  `readContract` on `0xCf1b86ce...`.
+- `signMessage` (EIP-191) for token-gating proofs in Phase 3.
+- History: WDK `getTransactionHistory`; if Amoy isn't covered, fall back to PolygonScan Amoy API /
+  viem scan.
 
 ### 8.3 Acceptance
 
-- Fresh app: generate seed → see Amoy address + QR.
-- Fund address from an Amoy faucet (test MATIC) and with Bet Token; balances update.
+- Fresh app: create wallet → see Amoy address + QR.
+- Fund from an Amoy faucet (test MATIC) + Bet Token; balances update (TanStack Query caching).
 - Send Bet Token to a second address; tx confirms on Amoy and appears in history.
-- Restart app: wallet persists and re-locks/unlocks.
+- Restart app: wallet persists; lock/unlock works (biometrics optional).
 - Multiple derived accounts (index 0..n) work.
 
 ### 8.4 Phase 2 tasks
 
-1. Add WDK packages: `@tetherto/wdk`, `@tetherto/wdk-wallet-evm`, `@tetherto/pear-wrk-wdk`;
-   dev dep `@tetherto/wdk-worklet-bundler`; plus `bare-ipc`.
-2. Generate an EVM-only worklet bundle (`wdk.config.js` → `polygonAmoy` → `@tetherto/wdk-wallet-evm`).
-3. Write `worklets/wallet/worklet.js` (`registerRpcHandlers` + WDK init); spawn it from Electron main
-   and connect via HRPC + `bare-ipc`; relay through the preload bridge.
-4. Mnemonic generation + encrypted storage via Pear storage; lock/unlock.
-5. Account derivation + address/QR (index 0..n).
-6. Balances (native + Bet Token via `getTokenBalance`) + history (`getTransactionHistory`).
-7. Send (native + ERC-20) + `signMessage`.
-8. Wallet pane UI in renderer.
-9. Local end-to-end on Amoy (faucet → receive → send → history).
+1. Add `@tetherto/wdk-react-native-core`, `@tetherto/wdk`, `@tetherto/wdk-wallet-evm`; dev dep
+   `@tetherto/wdk-worklet-bundler`.
+2. `wdk-worklet-bundler init` → `wdk.config.js` (polygonAmoy) → `generate` → `.wdk/bundle.js`.
+3. `WdkAppProvider` in the app root; wire `wdkConfigs` for Amoy.
+4. Wallet screens: create/import, lock/unlock, account + QR, balances, send, history.
+5. Bet Token balance + transfer (native + ERC-20).
+6. `signMessage` for later gating; biometric lock optional.
+7. One-time local native rebuild (WDK adds native deps): `npx expo run:android` → reinstall on device.
+8. End-to-end on Amoy (faucet → receive → send → history) on the physical device.
 
 ---
 
@@ -512,19 +523,19 @@ interface ITipsterVault is IERC4626 {
 
 ### 9.4 WDK ↔ contracts integration
 
-- Add a "Vaults" pane: browse vaults (via singleton reads), `deposit` / `redeem` through WDK
-  signing, see per-vault share balance + free/total assets.
-- Add a "Tipster" pane (if the user created a vault): pick an Azuro condition/outcome from the
+- Add "Vaults" screens: browse vaults (singleton reads), `deposit` / `redeem` through WDK signing,
+  see per-vault share balance + free/total assets.
+- Add a "Tipster" screen (if the user created a vault): pick an Azuro condition/outcome from the
   toolkit feed, sign `placeBet` via WDK, track AzuroBet NFT ids, settle.
-- All signing flows through the WDK worklet; the renderer never touches private keys.
+- All signing flows through the WDK worklet; the RN UI never touches private keys.
 
 ### 9.5 Token-gated channel access (ties Phase 1 + 3 together)
 
-- A tipster's private channel topic key is held by the tipster's worker.
+- A tipster's private channel topic key is held by the tipster's **Pear-end worklet**.
 - Fan requests access: signs a challenge with their EVM key (WDK `signMessage`).
-- Tipster's worker verifies the signature, then reads `vault.balanceOf(fan) >= threshold`
+- Tipster's Pear-end worklet verifies the signature, then reads `vault.balanceOf(fan) >= threshold`
   (on Amoy via RPC). If pass → send the channel topic key to the fan over the existing peer
-  connection. The fan's worker joins the channel.
+  connection. The fan's worklet joins the channel.
 - `threshold` is per-vault and stored off-chain by the tipster (or on-chain as a vault param in
   a later iteration).
 
@@ -532,7 +543,7 @@ interface ITipsterVault is IERC4626 {
 
 - `forge test -vv` passes incl. an Amoy-fork Azuro integration test (deposit → bet → settle → redeem).
 - Singleton deployed on Amoy; addresses recorded in `packages/contracts-abis/`.
-- From the Pear app: create a vault (you become tipster), deposit Bet Token as a fan, see shares.
+- From the RN app on device: create a vault (you become tipster), deposit Bet Token as a fan, see shares.
 - As tipster, place a real Azuro bet on Amoy from the vault; observe AzuroBet NFT + reduced free
   balance; settle and see balance return.
 - A fan holding >= threshold shares can unlock and read the tipster's private channel; a fan
@@ -563,10 +574,11 @@ The singleton/vault split is intentionally compatible with this future layer.
 
 - **Identity ↔ wallet linking**: optional, opt-in per user (sign-in-with-wallet). Not required for
   MVP; recommended for reputation later. (Open decision — defaulted to "optional".)
-- **Networking**: Hyperswarm over DHT for chat; Amoy JSON-RPC for chain. No relay/TURN planned for now.
-- **Storage**: Pear per-app storage for Corestore + encrypted mnemonic + channel directory.
-- **Error model**: bridge calls return typed errors; tx reverts surfaced to UI with decoded reasons
-  (`viem`/ethers ABI decode).
+- **Networking**: Hyperswarm over DHT for chat (Bare worklet); Amoy JSON-RPC for chain. No relay/TURN planned for now.
+- **Storage**: on-device app storage — `expo-file-system` `documentDirectory` for Corestore +
+  channel directory; MMKV (via WDK RN core) for encrypted mnemonic/wallet state.
+- **Error model**: `bare-rpc`/WDK calls return typed errors; tx reverts surfaced to UI with
+  decoded reasons (`viem`/ethers ABI decode).
 - **Config**: a single `chains.ts` exporting Amoy + Azuro v3.0.13 addresses; singleton address
   added after deploy.
 
@@ -574,14 +586,48 @@ The singleton/vault split is intentionally compatible with this future layer.
 
 ## 12. Testing & Acceptance (overall)
 
-- **Phase 1**: local multi-peer chat + persistence + packaged install reconnects.
-- **Phase 2**: full wallet lifecycle on Amoy (seed → receive → send → history) inside the worklet.
-- **Phase 3**: Foundry unit + Amoy-fork tests; live on Amoy with real Azuro bets; token-gating works.
+- **Phase 1**: on-device chat + persistence; phone ↔ WSL Node peer validates P2P; dev-client runs.
+- **Phase 2**: full wallet lifecycle on Amoy (seed → receive → send → history) on device via WDK RN core.
+- **Phase 3**: Foundry unit + Amoy-fork tests; live on Amoy with real Azuro bets from the device; token-gating works.
 - No CI requirements yet; a `pnpm test` + `forge test` entry point should exist per phase.
 
 ---
 
-## 13. Risks & Open Questions
+## 13. Dev workflow on WSL2 (local build + USB/adb, no EAS)
+
+Goal: no EAS, no emulator — just a USB cable and `adb`. Iterate JS fast on a physical Android
+device after a one-time local native build.
+
+**One-time setup (WSL2 + Windows host)**
+- WSL2: Node, pnpm, Expo CLI, `adb` (`sudo apt-get install adb`), Android SDK + Gradle (for the
+  local native build — Android Studio command-line tools are enough).
+- Windows: `usbipd-win` (`winget install usbipd-win`) — this is the bridge that makes the USB cable
+  visible inside WSL2 (WSL2 can't see USB devices on its own); phone in USB debugging mode.
+- Attach phone to WSL: `usbipd list` → `usbipd bind --busid <BUSID>` →
+  `usbipd attach --wsl --busid <BUSID>` (use `--auto-attach` to survive replug); verify `adb devices`.
+
+**One-time local native build (the only heavy build)**
+- `npx expo run:android` — runs `expo prebuild` (generates the native `android/` project) + Gradle
+  `assembleDebug` + installs on the connected device. First run is slow (Gradle deps + native
+  modules like `react-native-bare-kit`, libsodium); subsequent runs are cached.
+- Rebuild **only** when native deps change (add/upgrade of `react-native-bare-kit`, WDK native
+  modules, Expo config plugins) — not on JS or worklet-bundle changes.
+
+**Day-to-day (fast)**
+- Metro: `npx expo start --localhost` in WSL.
+- Bridge device → WSL Metro: `adb reverse tcp:8081 tcp:8081`.
+- JS changes → Metro HMR on device (seconds).
+- Worklet (chat `pear-end` / WDK bundle) changes → rebundle (`bare-pack` /
+  `wdk-worklet-bundler generate`, seconds) + reload app — **no native rebuild**.
+
+**P2P testing without a second phone**
+- Run a **Node/Bare peer on WSL** using the **same** `pear-end` bundle on the same Hyperswarm
+  topic; the phone and WSL peer connect over the DHT (LAN/localhost). Validates chat end-to-end
+  with a single device.
+
+---
+
+## 14. Risks & Open Questions
 
 Resolved during spec refinement:
 
@@ -598,30 +644,40 @@ Still open (confirm at implementation time):
   the AzuroBet NFT id) against `chainsData[polygonAmoy.id].contracts.lp.abi` / `setupContracts`.
 - **WDK indexer coverage for Amoy** — `getTransactionHistory` may need a PolygonScan Amoy / viem
   fallback if the WDK indexer doesn't cover Amoy.
-- **Pear desktop worklet-spawn API** — `pear-wrk-wdk` is documented around RN Bare Kit; confirm the
-  exact spawn path from a Pear Electron main. Fallback: a dedicated Bare **worker** with the same
-  HRPC primitives (no wallet-side API change).
+- **WDK EVM module vs bundler** — the RN core's bundler example uses `@tetherto/wdk-wallet-evm-erc-4337`;
+  confirm the standard `@tetherto/wdk-wallet-evm` works with the bundler for a plain Amoy wallet,
+  else use erc-4337 in standard (non-AA) mode.
+- **One-time native build** — first local `npx expo run:android` (Gradle + native modules like
+  `react-native-bare-kit`/libsodium) is slow; cached afterward. Rebuild only on native-dep changes.
+  (No EAS by choice — local build + USB/`adb`.)
+- **WSL USB/ADB reliability** — `usbipd-win` attach can drop on replug; use `--auto-attach` and
+  re-run `adb reverse` after re-attach.
+- **Two-device P2P testing** — a single phone can't easily run two instances; mitigate with the
+  WSL Node/Bare peer on the same topic (§13).
 - **4626 compliance** — the vault does not custody the asset, so strict ERC-4626 viewers/tools may
   mis-report `totalAssets`/`asset`. Acceptable for MVP; redesign later (esp. for the privacy phase).
 - **Settlement timing** — Azuro resolution is oracle-dependent; settle-on-demand is fine for MVP.
 - **Gas** — tipster needs test MATIC to trigger `placeBet`; documented in the dev guide.
-- **Pear mobile** — confirmed deferred; desktop Pear app is the Phase 1–3 target.
 
 ---
 
-## 14. References
+## 15. References
 
 - Pear docs: https://docs.pears.com
-- Pear chat tutorial: https://docs.pears.com/getting-started/build-a-peer-to-peer-chat/build-a-peer-to-peer-chat/
-- `hello-pear-electron`: https://docs.pears.com/getting-started/from-a-template/start-from-hello-pear-electron/
+- Pear mobile guide (Bare + Expo): https://github.com/holepunchto/pear-docs/blob/main/guide/making-a-bare-mobile-app.md
+- `bare-expo` template: https://github.com/holepunchto/bare-expo
+- `react-native-bare-kit`: https://github.com/holepunchto/bare-kit
+- `bare-rpc`: https://github.com/holepunchto/bare-rpc
 - WDK docs: https://docs.wdk.tether.io
+- WDK React Native Core: https://docs.wdk.tether.io/tools/react-native-core/ · https://github.com/tetherto/wdk-react-native-core
 - WDK EVM module: https://docs.wdk.tether.io/sdk/wallet-modules/wallet-evm/
-- WDK Pear Worklet: https://github.com/tetherto/pear-wrk-wdk · npm `@tetherto/pear-wrk-wdk`
 - WDK Worklet Bundler: https://github.com/tetherto/wdk-worklet-bundler · docs https://docs.wdk.tether.io/tools/worklet-bundler/
-- WDK React Native Core (mobile, deferred): https://github.com/tetherto/wdk-react-native-core
+- WDK Pear Worklet (prebuilt bundle): https://github.com/tetherto/pear-wrk-wdk · npm `@tetherto/pear-wrk-wdk`
 - Azuro deployment addresses: https://gem.azuro.org/hub/blockchains/deployment-addresses
 - Azuro v3 APIs: https://gem.azuro.org/hub/apps/APIs · v3 migration: https://gem.azuro.org/hub/protocol-v3/v3-migration-guide
 - Azuro toolkit (LLMs): https://context7.com/azuro-protocol/toolkit/llms.txt
+- Expo dev client / prebuild: https://docs.expo.dev/bare/install-dev-builds-in-bare · `expo run:android`: https://docs.expo.dev/more/expo-cli/
+- WSL2 Android dev (usbipd-win + adb): https://learn.microsoft.com/windows/wsl/
 - Polygon Amoy: chain id 80002, explorer https://amoy.polygonscan.com
 
 ---
@@ -637,15 +693,19 @@ Still open (confirm at implementation time):
 | Q5 | Channel access | Token-gated (holding vault share token >= threshold). |
 | Q6 | Deposit/bet asset (Amoy) | Azuro Bet Token `0xCf1b86ce...` as the single deposit + bet asset. |
 | Q7 | Phase 1 scope | Multiple tipster channels + persistence + packaged app. |
-| Q8 | Phase 2 wallet host | WDK inside the Pear app as a Bare worklet (unified desktop). Expo/RN deferred. |
+| Q8 | Wallet host | WDK via **React Native Core** (engine in a Bare worklet). Platform = Expo RN, Android-first. |
 | Q9 | Azuro execution | Singleton routes the call to Azuro and updates the vault; funds live in the singleton. |
 | Q10 | Tooling | pnpm workspaces + Foundry. |
+| P1 | Platform (post-questionnaire) | **RN/Expo now** via `expo-dev-client` + physical device over ADB (WSL2 + `usbipd-win`). Desktop Electron path dropped. P2P = Pear/Holepunch modules in a `react-native-bare-kit` worklet; wallet = WDK RN core. See §13 for the fast-iteration workflow. |
 
 ### Refinement notes (post-questionnaire research)
 
-- WDK Pear Worklet packages confirmed: `@tetherto/pear-wrk-wdk` + `@tetherto/wdk-worklet-bundler`
-  (custom EVM-only bundle); `@tetherto/wdk-react-native-core` deferred to mobile. See §4.2 / §8.2.
-- WDK EVM module supports Polygon Amoy; full wallet API surface captured in §8.2.
+- Platform locked to **Expo RN (Android)**, developed from WSL2. P2P via `react-native-bare-kit`
+  (Bare worklet) + `bare-rpc` + `bare-pack`; wallet via `@tetherto/wdk-react-native-core`
+  (engine in a second Bare worklet). See §4.1 / §4.2 / §13.
+- WDK packages confirmed: `@tetherto/wdk-react-native-core`, `@tetherto/wdk`, `@tetherto/wdk-wallet-evm`,
+  `@tetherto/wdk-worklet-bundler`, optional prebuilt `@tetherto/pear-wrk-wdk`. See §4.2 / §8.2.
+- WDK EVM module supports Polygon Amoy; wallet API surface captured in §8.2.
 - Azuro v3 has two bet paths; the singleton uses the **direct on-chain** `lp.bet` + `withdrawPayout`
   (a contract can't do the EIP-712 signed/relayer flow). Early cashout is **out of MVP scope**. §4.3 / §9.
 - Bet Token = **6 decimals**, `minOdds` = **12 decimals**, Amoy env `PolygonAmoyUSDT`. §4.3.

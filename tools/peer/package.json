@@ -1,0 +1,16 @@
+{
+  "name": "@thetabet/peer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "b4a": "^1.8.1",
+    "corestore": "^7.11.0",
+    "hypercore": "^11.33.5",
+    "hypercore-crypto": "^3.7.0",
+    "hyperswarm": "^4.17.0"
+  }
+}

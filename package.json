@@ -1,0 +1,14 @@
+{
+  "name": "thetabet",
+  "private": true,
+  "scripts": {
+    "mobile:start": "npm --prefix apps/mobile start",
+    "mobile:open": "npm --prefix apps/mobile run open:android",
+    "mobile:android": "npm --prefix apps/mobile run android",
+    "mobile:prebuild": "npm --prefix apps/mobile run prebuild:clean -- --platform android",
+    "peer": "pnpm --filter @thetabet/peer start"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

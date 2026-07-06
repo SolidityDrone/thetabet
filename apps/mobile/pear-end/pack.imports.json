@@ -1,0 +1,11 @@
+{
+  "#package": "/home/drone/projects/ThethaBet/apps/mobile/package.json",
+  "bare-fs": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/bare-fs",
+  "bare-path": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/bare-path",
+  "b4a": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/b4a",
+  "corestore": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/corestore",
+  "hyperswarm": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/hyperswarm",
+  "hypercore-crypto": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/hypercore-crypto",
+  "bare-rpc": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/bare-rpc",
+  "bare-kit": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/bare-kit"
+}

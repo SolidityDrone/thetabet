@@ -1,14 +1,17 @@
 import { BetSlipCart } from '@/components/bet/bet-slip-cart'
 import { OddsBadge } from '@/components/bet/odds-badge'
 import { EventCard } from '@/components/bet/event-card'
-import { PitchBackdrop } from '@/components/ui/pitch-backdrop'
+import { LiveMatchStatsPanel } from '@/components/bet/live-match-stats'
+import { ScreenBackdrop } from '@/components/ui/screen-backdrop'
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { azuroBetToken, formatAzuroOdds } from '@/config/azuro'
 import { useAppMode } from '@/context/app-mode'
 import { useAzuroEvent } from '@/hooks/use-azuro-event'
+import { useLiveMatchStats } from '@/hooks/use-live-match-stats'
 import { formatTipsterHandle, useProfileVaults } from '@/hooks/use-profile-vaults'
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation'
+import { useScreenTopPadding } from '@/hooks/use-screen-top-padding'
 import { useWalletPortfolio } from '@/hooks/use-wallet-portfolio'
 import { quoteAzuroBet, placeAzuroBet, type BetPlacementStage } from '@/services/azuro/bet-placement'
 import { saveLocalBet } from '@/services/azuro/bet-history'
@@ -27,7 +30,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams } from 'expo-router'
 import { toast } from 'sonner-native'
 import type { Address } from 'viem'
@@ -59,14 +61,19 @@ function pickPrimaryMarkets(conditions: ConditionDetailedData[]) {
 }
 
 export default function BetEventScreen() {
-  const insets = useSafeAreaInsets()
+  const topPadding = useScreenTopPadding()
   const router = useDebouncedNavigation()
   const { id } = useLocalSearchParams<{ id: string }>()
   const { hasSkippedWallet } = useAppMode()
   const { address } = useWalletPortfolio()
   const { tipsterVault, tipsterHandle } = useProfileVaults(address)
-  const { game, conditions, isOnChain, marketStatus, isLoading, isRefreshing, error, refresh, refreshMarketStatus } =
+  const { game, conditions, isOnChain, marketStatus, isLoading, isLoadingMarkets, isRefreshing, error, refresh, refreshMarketStatus } =
     useAzuroEvent(id)
+  const {
+    stats: liveStats,
+    isLoading: isLoadingLiveStats,
+    refresh: refreshLiveStats,
+  } = useLiveMatchStats(game)
 
   const [selected, setSelected] = useState<AzuroBetSelection | null>(null)
   const [betMode, setBetMode] = useState<AzuroBetMode>('personal')
@@ -95,6 +102,10 @@ export default function BetEventScreen() {
     }
     return null
   }, [isOnChain, marketStatus])
+
+  const handleRefresh = useCallback(async () => {
+    await Promise.all([refresh(), refreshLiveStats()])
+  }, [refresh, refreshLiveStats])
 
   const refreshQuote = useCallback(async () => {
     if (!selected || !address || hasSkippedWallet) {
@@ -223,8 +234,8 @@ export default function BetEventScreen() {
   const cartHeight = selected ? 320 : 0
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <PitchBackdrop />
+    <View style={[styles.screen, { paddingTop: topPadding }]}>
+      <ScreenBackdrop />
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <ChevronLeft color={colors.text} size={22} />
@@ -233,7 +244,7 @@ export default function BetEventScreen() {
         <View style={styles.backButtonSpacer} />
       </View>
 
-      {isLoading ? (
+      {isLoading && !game ? (
         <View style={styles.centered}>
           <ActivityIndicator color={colors.primary} size="large" />
         </View>
@@ -244,7 +255,7 @@ export default function BetEventScreen() {
             refreshControl={
               <RefreshControl
                 refreshing={isRefreshing}
-                onRefresh={refresh}
+                onRefresh={handleRefresh}
                 tintColor={colors.primary}
               />
             }
@@ -255,31 +266,36 @@ export default function BetEventScreen() {
               </View>
             ) : null}
 
-            {game ? <EventCard game={game} large /> : null}
+            {game ? <EventCard game={game} large liveStats={liveStats} /> : null}
 
             {isOnChain === false ? (
               <View style={styles.previewCard}>
-                <Text style={styles.previewTitle}>Preview market</Text>
+                <Text style={styles.previewTitle}>No open markets</Text>
                 <Text style={styles.previewText}>
-                  Odds are shown early, but this match is not deployed on Polygon yet. Bets will fail
-                  until Azuro puts the market on-chain.
+                  This match has no active bettable lines right now. Pull to refresh or pick another
+                  event from the list.
                 </Text>
               </View>
             ) : null}
 
             {game?.state === 'Live' ? (
-              <View style={styles.liveCard}>
-                <Text style={styles.liveTitle}>Live match</Text>
-                <Text style={styles.liveText}>
-                  Live odds refresh when markets are enabled on Azuro.
-                </Text>
-              </View>
+              <LiveMatchStatsPanel
+                stats={liveStats}
+                isLoading={isLoadingLiveStats}
+                homeName={game.participants[0]?.name}
+                awayName={game.participants[1]?.name}
+              />
             ) : null}
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Markets</Text>
               <Text style={styles.sectionHint}>One selection per event.</Text>
-              {markets.length === 0 ? (
+              {isLoadingMarkets ? (
+                <View style={styles.marketsLoading}>
+                  <ActivityIndicator color={colors.primary} />
+                  <Text style={styles.emptyText}>Loading markets…</Text>
+                </View>
+              ) : markets.length === 0 ? (
                 <Text style={styles.emptyText}>No active markets for this event yet.</Text>
               ) : (
                 markets.map((condition) => (
@@ -421,22 +437,12 @@ const styles = StyleSheet.create({
   outcomeButtonSelected: {
     borderColor: colors.primary,
     backgroundColor: colors.neonMuted,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.primary,
   },
   cartWrap: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-  },
-  liveCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.warningBorder,
-    backgroundColor: colors.warningBackground,
-    padding: 12,
-    gap: 4,
   },
   previewCard: {
     borderRadius: 12,
@@ -457,16 +463,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
   },
-  liveTitle: {
-    color: colors.warning,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  liveText: {
-    color: colors.text,
-    fontSize: 12,
-    lineHeight: 17,
-  },
   errorCard: {
     borderRadius: 12,
     borderWidth: 1,
@@ -481,5 +477,11 @@ const styles = StyleSheet.create({
   emptyText: {
     color: colors.textSecondary,
     fontSize: 13,
+  },
+  marketsLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
   },
 })

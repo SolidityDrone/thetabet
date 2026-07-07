@@ -65,8 +65,8 @@ export const theme = {
     backgroundColor: colors.card,
   },
   cardAccent: {
-    borderLeftWidth: 3,
-    borderLeftColor: colors.primary,
+    borderWidth: 1,
+    borderColor: colors.borderNeon,
   },
   tabBar: {
     height: 58,

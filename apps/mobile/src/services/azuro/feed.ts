@@ -1,13 +1,29 @@
-import { GameState, type GameData, type ConditionDetailedData } from '@azuro-org/toolkit'
-import { AZURO_FOOTBALL_SLUG } from '@/config/azuro'
 import {
-  fetchAzuroConditionsByGameIds,
-  fetchAzuroGamesByIds,
+  GameState,
+  getConditionsByGameIds,
+  getConditionsState,
+  getGamesByFilters,
+  getGamesByIds,
+  type ConditionDetailedData,
+  type GameData,
+} from '@azuro-org/toolkit'
+import {
+  AZURO_CHAIN_ID,
+  AZURO_FOOTBALL_SLUG,
+  AZURO_MIN_PER_PAGE,
+  AZURO_WORLD_CUP_LEAGUE_SLUG,
+} from '@/config/azuro'
+import {
+  fetchAzuroGamesByFilters,
   fetchAzuroNavigation,
   fetchAzuroSports,
+  type AzuroGamesByFiltersResponse,
 } from '@/services/azuro/api-client'
-import { fetchOnChainFootballBettableGameIds } from '@/services/azuro/onchain-feed'
+import { azuroCacheKey, getAzuroCache, setAzuroCache } from '@/services/azuro/cache'
 import type { AzuroFootballSection, AzuroLeagueRef } from '@/types/azuro'
+
+const GAMES_CACHE_TTL_MS = 60_000
+const CONDITIONS_CACHE_TTL_MS = 30_000
 
 export function isRealFootballGame(game: GameData): boolean {
   const haystack = [
@@ -29,6 +45,77 @@ function sortByKickoff(games: GameData[]) {
   return [...games].sort(
     (left, right) => Number(left.startsAt) - Number(right.startsAt)
   )
+}
+
+export function sortFootballSections(sections: AzuroFootballSection[]) {
+  const weight = (section: AzuroFootballSection) => {
+    if (section.league.slug === AZURO_WORLD_CUP_LEAGUE_SLUG) return 0
+    if (section.league.isTopLeague) return 1
+    return 2
+  }
+
+  return [...sections].sort((left, right) => {
+    const byLeague = weight(left) - weight(right)
+    if (byLeague !== 0) return byLeague
+    return left.league.name.localeCompare(right.league.name)
+  })
+}
+
+/** World Cup and other headline leagues surface first in the all-football view. */
+export function prioritizeFootballGames(games: GameData[]) {
+  const weight = (game: GameData) => {
+    if (game.league?.slug === AZURO_WORLD_CUP_LEAGUE_SLUG) return 0
+    if (game.league?.isTopLeague) return 1
+    return 2
+  }
+
+  return sortByKickoff(games).sort((left, right) => {
+    const byLeague = weight(left) - weight(right)
+    if (byLeague !== 0) return byLeague
+    return Number(left.startsAt) - Number(right.startsAt)
+  })
+}
+
+async function loadGamesByFilters(params: {
+  gameState: 'Prematch' | 'Live'
+  leagueSlug?: string
+  page?: number
+  perPage?: number
+}): Promise<AzuroGamesByFiltersResponse> {
+  const gameState = params.gameState
+  const page = params.page ?? 1
+  const perPage = Math.max(params.perPage ?? 15, AZURO_MIN_PER_PAGE)
+  const leagueSlug = params.leagueSlug?.trim() || undefined
+
+  const cacheKey = azuroCacheKey(['games', gameState, leagueSlug, page, perPage])
+  const cached = getAzuroCache<AzuroGamesByFiltersResponse>(cacheKey)
+  if (cached) return cached
+
+  const directParams = {
+    gameState,
+    sportSlug: AZURO_FOOTBALL_SLUG,
+    leagueSlug,
+    page,
+    perPage,
+  }
+
+  try {
+    const result = await fetchAzuroGamesByFilters(directParams)
+    setAzuroCache(cacheKey, result, GAMES_CACHE_TTL_MS)
+    return result
+  } catch {
+    const state = gameState === 'Live' ? GameState.Live : GameState.Prematch
+    const result = await getGamesByFilters({
+      chainId: AZURO_CHAIN_ID,
+      state,
+      sportSlug: AZURO_FOOTBALL_SLUG,
+      leagueSlug,
+      page,
+      perPage,
+    })
+    setAzuroCache(cacheKey, result, GAMES_CACHE_TTL_MS)
+    return result
+  }
 }
 
 function flattenSportsTree(
@@ -92,10 +179,8 @@ export async function fetchFootballSportsFeed(params?: {
   return flattenSportsTree(data.sports, gameState)
 }
 
-function gamesToFootballFeed(games: GameData[], gameState: 'Prematch' | 'Live') {
-  const filtered = sortByKickoff(
-    games.filter((game) => isRealFootballGame(game) && game.state === gameState)
-  )
+export function gamesToFootballFeed(games: GameData[]) {
+  const filtered = sortByKickoff(games.filter((game) => isRealFootballGame(game)))
 
   const leagues: AzuroLeagueRef[] = []
   const sections: AzuroFootballSection[] = []
@@ -120,49 +205,159 @@ function gamesToFootballFeed(games: GameData[], gameState: 'Prematch' | 'Live') 
     section.games.push(game)
   }
 
-  return { sections, leagues, games: filtered }
+  return {
+    sections: sortFootballSections(sections),
+    leagues,
+    games: filtered,
+  }
 }
 
-async function hydrateGamesByIds(gameIds: string[]) {
-  const games: GameData[] = []
-  const seen = new Set<string>()
+export type BettableFootballPage = ReturnType<typeof gamesToFootballFeed> & {
+  page: number
+  hasMore: boolean
+  total: number
+}
 
-  for (let offset = 0; offset < gameIds.length; offset += 20) {
-    const chunk = gameIds.slice(offset, offset + 20)
-    const batch = await fetchAzuroGamesByIds(chunk)
-    for (const game of batch) {
-      const id = String(game.id)
-      if (seen.has(id)) continue
-      seen.add(id)
-      games.push(game)
-    }
+/** One page of bettable football from Azuro's betting API (games-by-filters). */
+export async function fetchBettableFootballPage(params?: {
+  gameState?: 'Prematch' | 'Live'
+  leagueSlug?: string
+  page?: number
+  perPage?: number
+}): Promise<BettableFootballPage> {
+  const gameState = params?.gameState ?? 'Prematch'
+  const page = params?.page ?? 1
+  const perPage = Math.max(params?.perPage ?? 15, AZURO_MIN_PER_PAGE)
+  const leagueSlug = params?.leagueSlug?.trim() || undefined
+
+  const result = await loadGamesByFilters({
+    gameState,
+    leagueSlug,
+    page,
+    perPage,
+  })
+
+  const feed = gamesToFootballFeed(result.games ?? [])
+
+  return {
+    ...feed,
+    page,
+    hasMore: page < (result.totalPages ?? 1),
+    total: result.total ?? feed.games.length,
+  }
+}
+
+/**
+ * Fast first paint: World Cup only (small, bettable, pinned to top).
+ */
+export async function fetchWorldCupFootballPage(): Promise<BettableFootballPage> {
+  return fetchBettableFootballPage({
+    leagueSlug: AZURO_WORLD_CUP_LEAGUE_SLUG,
+    page: 1,
+    perPage: 10,
+  })
+}
+
+/**
+ * Merge World Cup ahead of the general catalog for the all-football view.
+ */
+export async function fetchBettableFootballInitialBatch(params?: {
+  leagueSlug?: string
+  perPage?: number
+}): Promise<BettableFootballPage> {
+  const leagueSlug = params?.leagueSlug?.trim() || undefined
+  const perPage = Math.max(params?.perPage ?? 12, AZURO_MIN_PER_PAGE)
+
+  if (leagueSlug) {
+    return fetchBettableFootballPage({ leagueSlug, page: 1, perPage })
   }
 
-  return games
+  const [main, worldCup] = await Promise.all([
+    fetchBettableFootballPage({ page: 1, perPage }),
+    fetchWorldCupFootballPage().catch((error) => {
+      console.warn('Azuro World Cup feed unavailable:', error)
+      return null
+    }),
+  ])
+
+  const games = prioritizeFootballGames(
+    mergeFootballGames(worldCup?.games ?? [], main.games)
+  )
+  const feed = gamesToFootballFeed(games)
+
+  return {
+    ...feed,
+    page: 1,
+    hasMore: main.hasMore,
+    total: main.total + (worldCup?.total ?? 0),
+  }
 }
 
-/** Bettable football from Polygon on-chain feed (not the REST preview catalog). */
+/** @deprecated Prefer fetchBettableFootballPage for progressive loading. */
 export async function fetchBettableFootballFromChain(params?: {
   gameState?: 'Prematch' | 'Live'
   leagueSlug?: string
   numberOfGames?: number
 }) {
-  const gameState = params?.gameState ?? 'Prematch'
-  const numberOfGames = params?.numberOfGames ?? 30
-  const leagueSlug = params?.leagueSlug?.trim()
-
-  const ids = await fetchOnChainFootballBettableGameIds({
-    gameState,
-    limit: leagueSlug ? numberOfGames * 6 : numberOfGames * 3,
+  const page = await fetchBettableFootballPage({
+    gameState: params?.gameState,
+    leagueSlug: params?.leagueSlug,
+    perPage: params?.numberOfGames ?? 30,
+    page: 1,
   })
+  return page
+}
 
-  let games = await hydrateGamesByIds(ids)
-  if (leagueSlug) {
-    games = games.filter((game) => game.league?.slug === leagueSlug)
+export function mergeFootballGames(existing: GameData[], incoming: GameData[]) {
+  const seen = new Set(existing.map((game) => game.id))
+  const merged = [...existing]
+  for (const game of incoming) {
+    if (seen.has(game.id)) continue
+    seen.add(game.id)
+    merged.push(game)
   }
+  return sortByKickoff(merged.filter((game) => isRealFootballGame(game)))
+}
 
-  games = sortByKickoff(games.filter((game) => game.state === gameState)).slice(0, numberOfGames)
-  return gamesToFootballFeed(games, gameState)
+async function verifyActiveConditions(
+  conditions: ConditionDetailedData[]
+): Promise<ConditionDetailedData[]> {
+  if (conditions.length === 0) return []
+
+  const states = await getConditionsState({
+    chainId: AZURO_CHAIN_ID,
+    conditionIds: conditions.map((condition) => condition.conditionId),
+  })
+  const stateById = new Map(states.map((row) => [row.conditionId, row]))
+
+  return conditions
+    .map((condition) => {
+      const live = stateById.get(condition.conditionId)
+      if (!live || live.state !== 'Active') return null
+
+      const outcomes = condition.outcomes
+        .map((outcome) => {
+          const liveOutcome = live.outcomes.find(
+            (row) => String(row.outcomeId) === String(outcome.outcomeId)
+          )
+          if (!liveOutcome || liveOutcome.state !== 'Active') return null
+          return {
+            ...outcome,
+            odds: liveOutcome.odds,
+            state: 'Active' as const,
+          }
+        })
+        .filter(Boolean) as ConditionDetailedData['outcomes']
+
+      if (outcomes.length === 0) return null
+
+      return {
+        ...condition,
+        state: 'Active',
+        outcomes,
+      }
+    })
+    .filter(Boolean) as ConditionDetailedData[]
 }
 
 export async function fetchFootballNavigation() {
@@ -194,32 +389,40 @@ export async function fetchFootballNavigation() {
 }
 
 export async function fetchGameById(gameId: string) {
-  const games = await fetchAzuroGamesByIds([gameId])
+  const games = await getGamesByIds({ chainId: AZURO_CHAIN_ID, gameIds: [gameId] })
   return games[0] ?? null
 }
 
-export async function fetchGameConditions(gameId: string) {
-  const conditions = await fetchAzuroConditionsByGameIds([gameId], true)
+/** Active markets for display — catalog games are already bettable; verify only when placing a bet. */
+export async function fetchGameConditions(gameId: string, options?: { verify?: boolean }) {
+  const cacheKey = azuroCacheKey(['conditions', gameId, options?.verify ? 'v' : 'f'])
+  const cached = getAzuroCache<ConditionDetailedData[]>(cacheKey)
+  if (cached) return cached
 
-  return conditions.filter(
+  const conditions = await getConditionsByGameIds({
+    chainId: AZURO_CHAIN_ID,
+    gameIds: [gameId],
+    extended: true,
+  })
+
+  const active = conditions.filter(
     (condition) =>
       condition.outcomes.some((outcome) => outcome.state === 'Active') &&
       (condition.isPrematchEnabled || condition.isLiveEnabled)
-  ) as ConditionDetailedData[]
+  )
+
+  const result = options?.verify ? await verifyActiveConditions(active) : active
+  setAzuroCache(cacheKey, result, CONDITIONS_CACHE_TTL_MS)
+  return result
 }
 
 export function pickTopEvent(games: GameData[]): GameData | null {
   if (games.length === 0) return null
 
-  const ranked = [...games].sort((left, right) => {
-    const leftTop = left.league?.isTopLeague ? 1 : 0
-    const rightTop = right.league?.isTopLeague ? 1 : 0
-    if (leftTop !== rightTop) return rightTop - leftTop
-
+  const ranked = prioritizeFootballGames(games).sort((left, right) => {
     const leftLive = left.state === GameState.Live ? 1 : 0
     const rightLive = right.state === GameState.Live ? 1 : 0
     if (leftLive !== rightLive) return rightLive - leftLive
-
     return Number(left.startsAt) - Number(right.startsAt)
   })
 

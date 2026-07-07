@@ -1,8 +1,15 @@
 import type { IndexedVault } from '@/types/indexed-vault'
 import { THETA_DEPLOYMENT } from '@/config/contracts.generated'
-import { sendWdkTransaction } from '@/services/wdk-evm'
-import { getWalletSecp256k1PublicKeyCoords } from '@/services/wdk-local-signer'
-import { THETA_SINGLETON_ADDRESS, thetaSingletonAbi, tipsterVaultAbi } from '@/config/theta'
+import { sendWdkTransaction, ensureBetTokenApproval } from '@/services/wdk-evm'
+import { getWalletSecp256k1PublicKeyCoords, waitForEvmTransaction } from '@/services/wdk-local-signer'
+import {
+  BET_TOKEN_ADDRESS,
+  BET_TOKEN_DECIMALS,
+  THETA_SINGLETON_ADDRESS,
+  formatBetToken,
+  thetaSingletonAbi,
+  tipsterVaultAbi,
+} from '@/config/theta'
 import { getWdkManager } from '@/services/wdk-bare-api'
 import { WDK_NETWORK_KEY } from '@/config/chains'
 import {
@@ -12,6 +19,7 @@ import {
   encodeFunctionData,
   formatEther,
   http,
+  parseUnits,
   type Address,
   type Hex,
   type PublicClient,
@@ -93,6 +101,9 @@ async function simulateContractCall(params: {
     }
     if (revert?.includes('InvalidTipsterName')) {
       throw new Error('Invalid handle. Use 3–20 lowercase letters, numbers, or underscores (not at the ends).')
+    }
+    if (revert?.includes('NotWhitelisted')) {
+      throw new Error('This wallet is not whitelisted for vault deposits yet.')
     }
 
     const gasEstimate = await getPublicClient()
@@ -256,4 +267,186 @@ export async function registerTipsterName(from: Address, handle: string) {
     to: THETA_SINGLETON_ADDRESS,
     data,
   })
+}
+
+export async function readVaultDepositWhitelist(account: Address) {
+  return getPublicClient().readContract({
+    address: THETA_SINGLETON_ADDRESS,
+    abi: thetaSingletonAbi,
+    functionName: 'isWhitelisted',
+    args: [account],
+  })
+}
+
+export async function previewVaultDeposit(vaultAddress: Address, amount: string) {
+  const assets = parseUnits(amount, BET_TOKEN_DECIMALS)
+  if (assets <= 0n) return 0n
+
+  return getPublicClient().readContract({
+    address: vaultAddress,
+    abi: tipsterVaultAbi,
+    functionName: 'previewDeposit',
+    args: [assets],
+  })
+}
+
+export type VaultDepositStage = 'approving' | 'waiting-approval' | 'depositing' | 'confirming'
+
+export async function depositIntoVault(params: {
+  from: Address
+  vaultAddress: Address
+  amount: string
+  onStage?: (stage: VaultDepositStage) => void
+}) {
+  const assets = parseUnits(params.amount, BET_TOKEN_DECIMALS)
+  if (assets <= 0n) {
+    throw new Error('Enter a valid stake amount.')
+  }
+
+  const whitelisted = await readVaultDepositWhitelist(params.from)
+  if (!whitelisted) {
+    throw new Error(
+      'This wallet is not whitelisted for vault deposits yet. Ask the deployer to whitelist your address on Polygon.'
+    )
+  }
+
+  const shares = await getPublicClient().readContract({
+    address: params.vaultAddress,
+    abi: tipsterVaultAbi,
+    functionName: 'previewDeposit',
+    args: [assets],
+  })
+
+  params.onStage?.('approving')
+  const approval = await ensureBetTokenApproval({
+    tokenAddress: BET_TOKEN_ADDRESS,
+    spender: params.vaultAddress,
+    owner: params.from,
+    requiredAmount: assets,
+    decimals: BET_TOKEN_DECIMALS,
+    symbol: 'USDT',
+  })
+  if (approval === 'confirmed') {
+    params.onStage?.('waiting-approval')
+  }
+
+  const data = encodeFunctionData({
+    abi: tipsterVaultAbi,
+    functionName: 'deposit',
+    args: [assets, params.from],
+  })
+
+  await simulateContractCall({
+    from: params.from,
+    to: params.vaultAddress,
+    data,
+  })
+
+  params.onStage?.('depositing')
+  const { hash } = await sendWdkTransaction({
+    to: params.vaultAddress,
+    data,
+  })
+
+  params.onStage?.('confirming')
+  await waitForEvmTransaction(hash)
+
+  return { hash, shares }
+}
+
+export async function readVaultShareBalance(vaultAddress: Address, owner: Address) {
+  return getPublicClient().readContract({
+    address: vaultAddress,
+    abi: tipsterVaultAbi,
+    functionName: 'balanceOf',
+    args: [owner],
+  })
+}
+
+export async function readVaultMaxWithdraw(vaultAddress: Address, owner: Address) {
+  return getPublicClient().readContract({
+    address: vaultAddress,
+    abi: tipsterVaultAbi,
+    functionName: 'maxWithdraw',
+    args: [owner],
+  })
+}
+
+export async function previewVaultWithdraw(vaultAddress: Address, amount: string) {
+  const assets = parseUnits(amount, BET_TOKEN_DECIMALS)
+  if (assets <= 0n) return 0n
+
+  return getPublicClient().readContract({
+    address: vaultAddress,
+    abi: tipsterVaultAbi,
+    functionName: 'previewWithdraw',
+    args: [assets],
+  })
+}
+
+export async function previewVaultRedeemAssets(vaultAddress: Address, shares: bigint) {
+  if (shares <= 0n) return 0n
+
+  return getPublicClient().readContract({
+    address: vaultAddress,
+    abi: tipsterVaultAbi,
+    functionName: 'previewRedeem',
+    args: [shares],
+  })
+}
+
+export type VaultWithdrawStage = 'withdrawing' | 'confirming'
+
+export async function withdrawFromVault(params: {
+  from: Address
+  vaultAddress: Address
+  amount: string
+  onStage?: (stage: VaultWithdrawStage) => void
+}) {
+  const assets = parseUnits(params.amount, BET_TOKEN_DECIMALS)
+  if (assets <= 0n) {
+    throw new Error('Enter a valid withdrawal amount.')
+  }
+
+  const whitelisted = await readVaultDepositWhitelist(params.from)
+  if (!whitelisted) {
+    throw new Error('This wallet is not whitelisted for vault withdrawals yet.')
+  }
+
+  const maxWithdraw = await readVaultMaxWithdraw(params.vaultAddress, params.from)
+  if (assets > maxWithdraw) {
+    throw new Error(
+      `Cannot withdraw ${params.amount} USDT right now. Max available: ${formatBetToken(maxWithdraw)} USDT (limited by vault free liquidity).`
+    )
+  }
+
+  const shares = await getPublicClient().readContract({
+    address: params.vaultAddress,
+    abi: tipsterVaultAbi,
+    functionName: 'previewWithdraw',
+    args: [assets],
+  })
+
+  const data = encodeFunctionData({
+    abi: tipsterVaultAbi,
+    functionName: 'withdraw',
+    args: [assets, params.from, params.from],
+  })
+
+  await simulateContractCall({
+    from: params.from,
+    to: params.vaultAddress,
+    data,
+  })
+
+  params.onStage?.('withdrawing')
+  const { hash } = await sendWdkTransaction({
+    to: params.vaultAddress,
+    data,
+  })
+
+  params.onStage?.('confirming')
+  await waitForEvmTransaction(hash)
+
+  return { hash, shares, assets }
 }

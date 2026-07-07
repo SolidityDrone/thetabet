@@ -23,6 +23,27 @@ const SPORTS_QUERY_KEYS = new Set([
 
 const NAVIGATION_QUERY_KEYS = new Set(['environment', 'sportHub', 'sportId'])
 
+const GAMES_BY_FILTERS_QUERY_KEYS = new Set([
+  'environment',
+  'gameState',
+  'sportSlug',
+  'sportId',
+  'leagueSlug',
+  'sportHub',
+  'orderBy',
+  'orderDirection',
+  'perPage',
+  'page',
+])
+
+export type AzuroGamesByFiltersResponse = {
+  games: GameData[]
+  page: number
+  perPage: number
+  total: number
+  totalPages: number
+}
+
 function toQueryString(allowedKeys: Set<string>, params: QueryRecord) {
   const search = new URLSearchParams()
 
@@ -136,6 +157,29 @@ export async function fetchAzuroNavigation() {
   return azuroGet<AzuroNavigationResponse>('/market-manager/navigation', NAVIGATION_QUERY_KEYS, {
     sportHub: 'sports',
   })
+}
+
+/** Direct games-by-filters call — fallback when toolkit getGamesByFilters fails. */
+export async function fetchAzuroGamesByFilters(params: {
+  gameState: 'Prematch' | 'Live'
+  sportSlug?: string
+  leagueSlug?: string
+  page?: number
+  perPage?: number
+}) {
+  return azuroGet<AzuroGamesByFiltersResponse>(
+    '/market-manager/games-by-filters',
+    GAMES_BY_FILTERS_QUERY_KEYS,
+    {
+      gameState: params.gameState,
+      sportSlug: params.sportSlug ?? 'football',
+      leagueSlug: params.leagueSlug,
+      page: params.page ?? 1,
+      perPage: Math.max(params.perPage ?? 10, 10),
+      orderBy: 'startsAt',
+      orderDirection: 'asc',
+    }
+  )
 }
 
 /** POST body must NOT include environment (API rejects it). */

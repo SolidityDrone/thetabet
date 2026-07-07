@@ -1,13 +1,16 @@
 import { ChannelListItem } from '@/components/pear/channel-list-item'
 import { IdentityBadge } from '@/components/pear/identity-badge'
 import { BrandHeader } from '@/components/ui/brand-header'
-import { PitchBackdrop } from '@/components/ui/pitch-backdrop'
+import { ScreenBackdrop } from '@/components/ui/screen-backdrop'
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { usePearChat } from '@/context/pear-chat'
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation'
+import { useOnChainHandle } from '@/hooks/use-on-chain-handle'
+import { useScreenTopPadding } from '@/hooks/use-screen-top-padding'
+import { useWalletPortfolio } from '@/hooks/use-wallet-portfolio'
 import type { PearChannel } from '@/types/pear'
-import { Lock, Megaphone, Plus, Users } from 'lucide-react-native'
+import { Lock, Megaphone, MessageCircle, Users } from 'lucide-react-native'
 import { useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
@@ -20,12 +23,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 function filterUserChannels(channels: PearChannel[], pubkey?: string | null) {
   if (!pubkey) return { publicChannels: [], privateChannels: [] }
 
-  const owned = channels.filter((channel) => channel.ownerPubkey === pubkey)
+  const owned = channels.filter(
+    (channel) => channel.ownerPubkey === pubkey && channel.kind !== 'dm'
+  )
   return {
     publicChannels: owned.filter((channel) => !channel.isPrivate),
     privateChannels: owned.filter((channel) => channel.isPrivate),
@@ -33,13 +37,32 @@ function filterUserChannels(channels: PearChannel[], pubkey?: string | null) {
 }
 
 export default function ChannelsScreen() {
-  const insets = useSafeAreaInsets()
+  const topPadding = useScreenTopPadding()
   const router = useDebouncedNavigation()
-  const { ready, error, identity, channels, createChannel, joinChannel, ensureStarted } =
-    usePearChat()
+  const { address } = useWalletPortfolio()
+  const { handle: onChainHandle, hasHandle, isLoading: isHandleLoading } = useOnChainHandle(address)
+  const {
+    ready,
+    error,
+    identity,
+    channels,
+    contacts,
+    dms,
+    createChannel,
+    joinChannel,
+    syncOnChainPresence,
+    sendContactRequest,
+    respondContactRequest,
+    ensureStarted,
+    refreshContacts,
+    onContactsChanged,
+  } = usePearChat()
   const [joinVisible, setJoinVisible] = useState(false)
+  const [dmVisible, setDmVisible] = useState(false)
   const [topicKey, setTopicKey] = useState('')
   const [channelName, setChannelName] = useState('')
+  const [dmHandle, setDmHandle] = useState('')
+  const [dmNote, setDmNote] = useState('')
   const [busy, setBusy] = useState(false)
 
   const { publicChannels, privateChannels } = useMemo(
@@ -52,6 +75,20 @@ export default function ChannelsScreen() {
       console.error('Pear chat failed to start:', bootError)
     })
   }, [ensureStarted])
+
+  useEffect(() => {
+    if (!ready) return
+    return onContactsChanged(() => {
+      void refreshContacts()
+    })
+  }, [onContactsChanged, ready, refreshContacts])
+
+  useEffect(() => {
+    if (!ready || !hasHandle || !onChainHandle || !address) return
+    void syncOnChainPresence(onChainHandle, address).catch((syncError) => {
+      console.error('Pear presence sync failed:', syncError)
+    })
+  }, [address, hasHandle, onChainHandle, ready, syncOnChainPresence])
 
   const handleCreateChannel = async (isPrivate: boolean) => {
     setBusy(true)
@@ -87,9 +124,46 @@ export default function ChannelsScreen() {
     }
   }
 
+  const handleSendDmRequest = async () => {
+    if (!hasHandle) {
+      Alert.alert('Set up your @handle', 'Register your tipster name in Profile before messaging others.')
+      router.push('/profile')
+      return
+    }
+
+    if (!dmHandle.trim()) {
+      Alert.alert('Handle required', 'Enter the on-chain @handle you want to message.')
+      return
+    }
+
+    setBusy(true)
+    try {
+      await sendContactRequest(dmHandle.trim(), dmNote.trim() || undefined)
+      setDmVisible(false)
+      setDmHandle('')
+      setDmNote('')
+      Alert.alert('Request sent', 'They must accept before you can chat.')
+    } catch (requestError) {
+      Alert.alert('Request failed', String(requestError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleRespondRequest = async (requestId: string, accept: boolean) => {
+    setBusy(true)
+    try {
+      await respondContactRequest(requestId, accept)
+    } catch (respondError) {
+      Alert.alert('Could not respond', String(respondError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (!ready) {
     return (
-      <View style={[styles.centered, { paddingTop: insets.top }]}>
+      <View style={[styles.centered, { paddingTop: topPadding }]}>
         <ActivityIndicator size="large" color={colors.primary} />
         <Text style={styles.loadingText}>Starting Pear P2P worklet…</Text>
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -98,25 +172,54 @@ export default function ChannelsScreen() {
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top }]}
-    >
-      <PitchBackdrop />
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScreenBackdrop />
       <BrandHeader
         title="Channels"
-        subtitle="Public discovery & private fan chat"
-        right={<IdentityBadge identity={identity} />}
+        subtitle="On-chain @handles · encrypted DMs · fan channels"
+        right={<IdentityBadge identity={identity} onChainHandle={onChainHandle} />}
       />
+
+      <View style={styles.identityCard}>
+        {isHandleLoading ? (
+          <ActivityIndicator color={colors.primary} size="small" />
+        ) : hasHandle && onChainHandle ? (
+          <>
+            <Text style={styles.identityLabel}>Your on-chain identity</Text>
+            <Text style={styles.identityHandle}>@{onChainHandle}</Text>
+            <Text style={styles.identityHint}>
+              Unique on Polygon — others message this @handle. Stay in the app to receive DMs.
+            </Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.identityLabel}>No @handle yet</Text>
+            <Text style={styles.identityHint}>
+              Register your tipster name in Profile. On-chain handles are unique and used for chat.
+            </Text>
+            <TouchableOpacity style={styles.linkButton} onPress={() => router.push('/profile')}>
+              <Text style={styles.linkButtonText}>Set up in Profile</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
 
       <View style={styles.actions}>
         <TouchableOpacity
-          style={styles.primaryButton}
+          style={[styles.primaryButton, !hasHandle && styles.buttonDisabled]}
+          onPress={() => (hasHandle ? setDmVisible(true) : router.push('/profile'))}
+          disabled={busy}
+        >
+          <MessageCircle size={18} color={colors.onPrimary} />
+          <Text style={styles.primaryButtonText}>Message @handle</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.secondaryButton}
           onPress={() => handleCreateChannel(false)}
           disabled={busy}
         >
-          <Megaphone size={18} color={colors.black} />
-          <Text style={styles.primaryButtonText}>Public</Text>
+          <Megaphone size={18} color={colors.primary} />
+          <Text style={styles.secondaryButtonText}>Public</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.secondaryButton}
@@ -131,6 +234,45 @@ export default function ChannelsScreen() {
           <Text style={styles.secondaryButtonText}>Join</Text>
         </TouchableOpacity>
       </View>
+
+      {contacts.pendingIncoming.length > 0 ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Contact requests</Text>
+          <View style={styles.list}>
+            {contacts.pendingIncoming.map((request) => (
+              <View key={request.id} style={styles.requestCard}>
+                <Text style={styles.requestTitle}>
+                  {request.fromHandle ? `@${request.fromHandle}` : request.fromPubkey?.slice(0, 12)}
+                </Text>
+                {request.note ? <Text style={styles.requestNote}>{request.note}</Text> : null}
+                <View style={styles.requestActions}>
+                  <TouchableOpacity
+                    style={styles.secondaryButton}
+                    onPress={() => handleRespondRequest(request.id, false)}
+                    disabled={busy}
+                  >
+                    <Text style={styles.secondaryButtonText}>Decline</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.primaryButton}
+                    onPress={() => handleRespondRequest(request.id, true)}
+                    disabled={busy}
+                  >
+                    <Text style={styles.primaryButtonText}>Accept</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      <ChannelSection
+        title="Private DMs"
+        emptyText="No accepted DMs yet. Message a registered @handle and wait for accept."
+        channels={dms}
+        onOpen={(id) => router.push(`/channel/${id}`)}
+      />
 
       <ChannelSection
         title="Public channels"
@@ -171,6 +313,40 @@ export default function ChannelsScreen() {
               </TouchableOpacity>
               <TouchableOpacity style={styles.primaryButton} onPress={handleJoin} disabled={busy}>
                 <Text style={styles.primaryButtonText}>Join</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={dmVisible} transparent animationType="slide">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Message @handle</Text>
+            <Text style={styles.modalHint}>
+              Must be a registered on-chain tipster handle. They need to be online to receive the request.
+            </Text>
+            <TextInput
+              style={styles.input}
+              placeholder="@handle"
+              placeholderTextColor={colors.textTertiary}
+              value={dmHandle}
+              onChangeText={setDmHandle}
+              autoCapitalize="none"
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Optional note"
+              placeholderTextColor={colors.textTertiary}
+              value={dmNote}
+              onChangeText={setDmNote}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.secondaryButton} onPress={() => setDmVisible(false)}>
+                <Text style={styles.secondaryButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.primaryButton} onPress={handleSendDmRequest} disabled={busy}>
+                <Text style={styles.primaryButtonText}>Send request</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -228,20 +404,40 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 24,
   },
-  header: {
-    paddingVertical: 16,
-    gap: 12,
+  identityCard: {
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: colors.borderNeon,
+    backgroundColor: colors.cardDark,
+    padding: 14,
+    gap: 6,
+    marginBottom: 16,
   },
-  title: {
-    color: colors.text,
-    fontSize: 28,
-    fontWeight: '700',
+  identityLabel: {
+    color: colors.textTertiary,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
   },
-  subtitle: {
+  identityHandle: {
+    color: colors.primary,
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  identityHint: {
     color: colors.textSecondary,
-    fontSize: 14,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  linkButton: {
+    alignSelf: 'flex-start',
     marginTop: 4,
-    lineHeight: 20,
+  },
+  linkButtonText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: '800',
   },
   actions: {
     flexDirection: 'row',
@@ -278,6 +474,9 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontWeight: '600',
   },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
   section: {
     marginBottom: 24,
     gap: 10,
@@ -286,6 +485,34 @@ const styles = StyleSheet.create({
     ...theme.typography.caption,
     color: colors.gold,
     fontSize: 11,
+  },
+  requestCard: {
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: colors.borderNeon,
+    backgroundColor: colors.card,
+    padding: 12,
+    gap: 8,
+  },
+  requestTitle: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  requestNote: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  requestActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  modalHint: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
   },
   list: {
     gap: 10,

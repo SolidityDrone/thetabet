@@ -29,6 +29,7 @@ export default function ChannelScreen() {
     error,
     identity,
     channels,
+    dms,
     getHistory,
     sendMessage,
     shareChannelKey,
@@ -43,10 +44,9 @@ export default function ChannelScreen() {
   const [shareVisible, setShareVisible] = useState(false)
   const [peerPubkey, setPeerPubkey] = useState('')
 
-  const channel = useMemo(
-    () => channels.find((entry) => entry.id === id) ?? null,
-    [channels, id]
-  )
+  const channel = useMemo(() => {
+    return channels.find((entry) => entry.id === id) ?? dms.find((entry) => entry.id === id) ?? null
+  }, [channels, dms, id])
 
   useEffect(() => {
     ensureStarted()
@@ -147,18 +147,22 @@ export default function ChannelScreen() {
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>{channel.name}</Text>
           <Text style={styles.meta}>
-            {channel.isPrivate ? 'Private' : 'Public'} · topic {channel.topicKey.slice(0, 12)}…
+            {channel.kind === 'dm'
+              ? `DM · ${channel.peerHandle ? '@' + channel.peerHandle : 'encrypted'}`
+              : `${channel.isPrivate ? 'Private' : 'Public'} · topic ${channel.topicKey.slice(0, 12)}…`}
           </Text>
         </View>
-        <IdentityBadge identity={identity} />
+        <IdentityBadge identity={identity} onChainHandle={identity?.onChainHandle} />
       </View>
 
       <View style={styles.toolbar}>
-        <TouchableOpacity style={styles.toolButton} onPress={copyTopicKey}>
-          <Share2 size={16} color={colors.primary} />
-          <Text style={styles.toolButtonText}>Copy topic</Text>
-        </TouchableOpacity>
-        {channel.isPrivate ? (
+        {channel.kind !== 'dm' ? (
+          <TouchableOpacity style={styles.toolButton} onPress={copyTopicKey}>
+            <Share2 size={16} color={colors.primary} />
+            <Text style={styles.toolButtonText}>Copy topic</Text>
+          </TouchableOpacity>
+        ) : null}
+        {channel.isPrivate && channel.kind !== 'dm' ? (
           <TouchableOpacity style={styles.toolButton} onPress={() => setShareVisible(true)}>
             <Text style={styles.toolButtonText}>Share key</Text>
           </TouchableOpacity>

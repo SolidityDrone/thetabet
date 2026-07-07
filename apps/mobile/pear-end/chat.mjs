@@ -5,9 +5,11 @@ import Corestore from 'corestore'
 import Hyperswarm from 'hyperswarm'
 import crypto from 'hypercore-crypto'
 import { identityToJson, loadOrCreateIdentity } from './identity.mjs'
+import { createDmMixin } from './dm.mjs'
 
 const DIRECTORY_FILE = 'channels.json'
 const PROFILE_FILE = 'tipster-profile.json'
+const ANNOUNCED_HANDLE_FILE = 'announced-handle.json'
 const SWARM_FLUSH_MS = 6000
 const CORE_UPDATE_MS = 8000
 
@@ -21,15 +23,22 @@ function promiseWithTimeout (promise, timeoutMs, label) {
 }
 
 export class PearChat {
-  constructor (storagePath, onMessage) {
+  constructor (storagePath, onMessage, onContactsChanged) {
     this.storagePath = path.join(storagePath, 'pear-end')
     this.onMessage = onMessage
+    this.onContactsChanged = onContactsChanged
     this.channels = new Map()
     this.directory = []
     this.identity = null
     this.store = null
     this.swarm = null
+    this.contactSwarm = null
     this.tipsterProfile = null
+    this.registeredHandle = null
+    this.contacts = { pendingIncoming: [], pendingOutgoing: [], accepted: [] }
+    this.handleDiscovery = null
+    this.contactDiscovery = null
+    Object.assign(this, createDmMixin(this))
     this.ready = this.init()
   }
 
@@ -38,6 +47,7 @@ export class PearChat {
     this.identity = loadOrCreateIdentity(this.storagePath)
     this.store = new Corestore(this.storagePath)
     this.swarm = new Hyperswarm()
+    this.contactSwarm = new Hyperswarm()
 
     this.swarm.on('connection', (socket) => {
       this.store.replicate(socket, { live: true })
@@ -46,11 +56,21 @@ export class PearChat {
     await this.store.ready()
     this.loadDirectory()
     this.loadProfile()
+    this.loadAnnouncedHandle()
+    this.loadContacts()
+    await this.ensureContactListener()
 
     // Attach saved channels in the background — never block boot on DHT flush.
     for (const channel of this.directory) {
-      this.attachChannel(channel, false).catch((error) => {
+      const attach = channel.kind === 'dm' ? this.attachDmChannel(channel) : this.attachChannel(channel, false)
+      attach.catch((error) => {
         console.error('pear-end attachChannel failed', channel.id, error)
+      })
+    }
+
+    if (this.registeredHandle) {
+      this.announceHandle(this.registeredHandle).catch((error) => {
+        console.error('pear-end announceHandle failed', error)
       })
     }
   }
@@ -78,17 +98,39 @@ export class PearChat {
     this.tipsterProfile = JSON.parse(fs.readFileSync(profilePath, 'utf8'))
   }
 
+  loadAnnouncedHandle () {
+    const announcedPath = path.join(this.storagePath, ANNOUNCED_HANDLE_FILE)
+    if (!fs.existsSync(announcedPath)) {
+      this.registeredHandle = null
+      return
+    }
+    const raw = JSON.parse(fs.readFileSync(announcedPath, 'utf8'))
+    this.registeredHandle = raw.handle || null
+  }
+
+  saveAnnouncedHandle () {
+    const announcedPath = path.join(this.storagePath, ANNOUNCED_HANDLE_FILE)
+    fs.writeFileSync(
+      announcedPath,
+      JSON.stringify({ handle: this.registeredHandle, updatedAt: Date.now() }, null, 2)
+    )
+  }
+
   saveProfile () {
     const profilePath = path.join(this.storagePath, PROFILE_FILE)
+    if (!this.tipsterProfile) return
     fs.writeFileSync(profilePath, JSON.stringify(this.tipsterProfile, null, 2))
   }
 
   channelSummary (channel) {
     return {
       id: channel.id,
+      kind: channel.kind || 'channel',
       name: channel.name,
       topicKey: channel.topicKey,
       ownerPubkey: channel.ownerPubkey,
+      peerPubkey: channel.peerPubkey || null,
+      peerHandle: channel.peerHandle || null,
       isPrivate: channel.isPrivate,
       createdAt: channel.createdAt,
     }
@@ -96,7 +138,7 @@ export class PearChat {
 
   async getIdentity () {
     await this.ready
-    return identityToJson(this.identity)
+    return identityToJson(this.identity, this.registeredHandle)
   }
 
   async getTipsterProfile () {
@@ -129,6 +171,7 @@ export class PearChat {
     const topicHex = b4a.toString(topicKey, 'hex')
     const channel = {
       id: topicHex.slice(0, 16),
+      kind: 'channel',
       name,
       topicKey: topicHex,
       ownerPubkey: b4a.toString(this.identity.publicKey, 'hex'),
@@ -156,6 +199,7 @@ export class PearChat {
 
     const channel = {
       id: normalized.slice(0, 16),
+      kind: 'channel',
       name: name || ('Joined ' + normalized.slice(0, 8)),
       topicKey: normalized,
       ownerPubkey: 'unknown',
@@ -180,12 +224,21 @@ export class PearChat {
     const channel = this.directory.find((entry) => entry.id === channelId)
     if (!channel) return null
 
+    if (channel.kind === 'dm') {
+      await this.attachDmChannel(channel)
+      return this.channels.get(channelId) ?? null
+    }
+
     await this.attachChannel(channel, false)
     return this.channels.get(channelId) ?? null
   }
 
   async getHistory (channelId) {
     await this.ready
+    const channel = this.directory.find((entry) => entry.id === channelId)
+    if (channel?.kind === 'dm') {
+      return this.getDmHistory(channelId)
+    }
     const runtime = await this.ensureRuntime(channelId)
     if (!runtime) return []
 
@@ -207,13 +260,17 @@ export class PearChat {
 
   async sendMessage ({ channelId, text }) {
     await this.ready
+    const channel = this.directory.find((entry) => entry.id === channelId)
+    if (channel?.kind === 'dm') {
+      return this.sendDmMessage({ dmId: channelId, text })
+    }
     const runtime = await this.ensureRuntime(channelId)
     if (!runtime) throw new Error('Channel not found: ' + channelId)
 
     const message = {
       id: Date.now() + '-' + Math.random().toString(16).slice(2, 8),
       channelId,
-      author: this.identity.handle,
+      author: this.registeredHandle || this.identity.handle,
       authorPubkey: b4a.toString(this.identity.publicKey, 'hex'),
       text,
       timestamp: Date.now(),

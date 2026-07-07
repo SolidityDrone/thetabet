@@ -14,6 +14,7 @@ export type IndexedVault = {
   settledLosses: number
   totalStaked: string
   totalPayout: string
+  createdAt?: string
   /** Active investors with shares > 0; null when indexer has not loaded yet. */
   subscriberCount?: number | null
 }

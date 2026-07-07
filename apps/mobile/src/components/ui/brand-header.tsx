@@ -1,5 +1,6 @@
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
+import { useScreenTopPadding } from '@/hooks/use-screen-top-padding'
 import { StyleSheet, Text, View, type ViewStyle } from 'react-native'
 
 type Props = {
@@ -7,12 +8,30 @@ type Props = {
   subtitle?: string
   right?: React.ReactNode
   compact?: boolean
+  /** Adds padding below the OS status bar. Default on for screen headers. */
+  withSafeTop?: boolean
   style?: ViewStyle
 }
 
-export function BrandHeader({ title, subtitle, right, compact, style }: Props) {
+export function BrandHeader({
+  title,
+  subtitle,
+  right,
+  compact,
+  withSafeTop = true,
+  style,
+}: Props) {
+  const topPadding = useScreenTopPadding(withSafeTop)
+
   return (
-    <View style={[styles.wrap, compact && styles.wrapCompact, style]}>
+    <View
+      style={[
+        styles.wrap,
+        compact && styles.wrapCompact,
+        withSafeTop && topPadding > 0 ? { paddingTop: topPadding } : null,
+        style,
+      ]}
+    >
       <View style={styles.left}>
         <View style={styles.brandRow}>
           <View style={styles.brandMark} />

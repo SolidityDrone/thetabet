@@ -4,6 +4,7 @@ import { getChain } from '@/config/chains'
 export const AZURO_CHAIN_ID = 137 satisfies ChainId
 export const AZURO_ENV = Environment.PolygonUSDT
 export const AZURO_FOOTBALL_SLUG = 'football'
+export const AZURO_WORLD_CUP_LEAGUE_SLUG = 'world-cup'
 export const AZURO_MIN_PER_PAGE = 10
 
 /** Polygon mainnet Azuro REST API */

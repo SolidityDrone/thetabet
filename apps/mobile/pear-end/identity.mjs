@@ -36,9 +36,10 @@ export function loadOrCreateIdentity (storagePath) {
   return identity
 }
 
-export function identityToJson (identity) {
+export function identityToJson (identity, onChainHandle = null) {
   return {
     pubkey: b4a.toString(identity.publicKey, 'hex'),
-    handle: identity.handle,
+    deviceId: identity.handle,
+    onChainHandle,
   }
 }

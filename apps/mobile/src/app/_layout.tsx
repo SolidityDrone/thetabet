@@ -10,6 +10,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
 import getChainsConfig from '@/config/get-chains-config';
 import { AppModeProvider } from '@/context/app-mode';
@@ -47,7 +48,8 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <SafeAreaProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider
         defaultMode="dark"
         brandConfig={{
@@ -87,8 +89,6 @@ export default function RootLayout() {
               backgroundColor: colors.card,
               borderWidth: 1,
               borderColor: colors.borderNeon,
-              borderLeftWidth: 3,
-              borderLeftColor: colors.primary,
             },
             titleStyle: { color: colors.text, fontWeight: '700' },
             descriptionStyle: { color: colors.textSecondary },
@@ -96,5 +96,6 @@ export default function RootLayout() {
         />
       </ThemeProvider>
     </GestureHandlerRootView>
+    </SafeAreaProvider>
   );
 }

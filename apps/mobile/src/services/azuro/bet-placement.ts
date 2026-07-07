@@ -88,7 +88,7 @@ function resolveBetExpiresAt(gameStartsAt?: string | number): number {
 }
 
 async function refreshSelectionOdds(selection: AzuroBetSelection): Promise<AzuroBetSelection> {
-  const conditions = await fetchGameConditions(selection.gameId)
+  const conditions = await fetchGameConditions(selection.gameId, { verify: true })
   const condition = conditions.find((item) => item.conditionId === selection.conditionId)
   const outcome = condition?.outcomes.find((item) => item.outcomeId === selection.outcomeId)
 

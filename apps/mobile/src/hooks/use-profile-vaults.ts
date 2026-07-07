@@ -1,6 +1,7 @@
 import type { IndexedPosition, IndexedVault } from '@/types/indexed-vault'
 import { calcRoiPercent, calcWinRate, formatBetToken } from '@/config/theta'
 import { ponderQuery } from '@/services/ponder/client'
+import { fetchDiscoveryVaults } from '@/services/ponder/vault-discovery'
 import { readOnChainTipsterProfile, readOnChainVaultSnapshot } from '@/services/theta-vault'
 import { useCallback, useEffect, useState } from 'react'
 
@@ -116,8 +117,9 @@ function mapPonderVault(row: PonderVaultRow, handle: string | null): IndexedVaul
 }
 
 async function loadPonderProfile(address: string, vaultId: bigint) {
+  const normalizedAddress = address.toLowerCase()
   const data = await ponderQuery<InvestorProfileResponse>(PROFILE_QUERY, {
-    address: address.toLowerCase(),
+    address: normalizedAddress,
   })
 
   let vault = data.vaults.items[0] ?? null
@@ -132,6 +134,26 @@ async function loadPonderProfile(address: string, vaultId: bigint) {
     positions: data.investorPositions.items.filter((p) => p.shares !== '0'),
     vault: vault ? mapPonderVault(vault, data.tipsterNames.items[0]?.name ?? null) : null,
     handle: data.tipsterNames.items[0]?.name ?? null,
+  }
+}
+
+async function loadOnChainProfile(address: `0x${string}`) {
+  try {
+    const onChain = await readOnChainTipsterProfile(address)
+    if (!onChain.hasVault) {
+      return {
+        onChain,
+        chainVault: null as IndexedVault | null,
+      }
+    }
+
+    const chainVault = await readOnChainVaultSnapshot(address, onChain.handle)
+    return { onChain, chainVault }
+  } catch {
+    return {
+      onChain: { vaultId: 0n, handle: null, hasVault: false },
+      chainVault: null as IndexedVault | null,
+    }
   }
 }
 
@@ -189,50 +211,92 @@ export function useProfileVaults(address: string) {
     setIsIndexerLoading(true)
     setError(null)
 
-    let hasChainVault = false
+    const wallet = address as `0x${string}`
 
-    try {
-      const onChain = await readOnChainTipsterProfile(address as `0x${string}`).catch(() => ({
-        vaultId: 0n,
-        handle: null,
-        hasVault: false,
-      }))
+    const [onChainResult, ponderResult] = await Promise.allSettled([
+      loadOnChainProfile(wallet),
+      loadPonderProfile(address, 0n),
+    ])
 
-      setOnChainHasVault(onChain.hasVault)
-      setTipsterHandle(onChain.handle)
+    const onChain =
+      onChainResult.status === 'fulfilled'
+        ? onChainResult.value
+        : { onChain: { vaultId: 0n, handle: null, hasVault: false }, chainVault: null }
 
-      if (onChain.hasVault) {
-        const chainVault = await readOnChainVaultSnapshot(
-          address as `0x${string}`,
-          onChain.handle
-        )
-        if (chainVault) {
-          hasChainVault = true
-          setTipsterVault(chainVault)
-          setVaultFromIndexer(false)
-        }
-      } else {
-        setTipsterVault(null)
-        setVaultFromIndexer(false)
-      }
+    let ponder: Awaited<ReturnType<typeof loadPonderProfile>> | null = null
+    let ponderError: string | null = null
 
-      try {
-        const ponder = await loadPonderProfile(address, onChain.vaultId)
-        setPositions(ponder.positions)
-        setTipsterHandle(ponder.handle ?? onChain.handle)
-        if (ponder.vault) {
-          setTipsterVault(ponder.vault)
-          setVaultFromIndexer(true)
-        }
-      } catch (refreshError) {
-        const message = refreshError instanceof Error ? refreshError.message : String(refreshError)
-        setError(hasChainVault ? null : message)
-        setPositions([])
-      }
-    } finally {
-      setIsLoading(false)
-      setIsIndexerLoading(false)
+    if (ponderResult.status === 'fulfilled') {
+      ponder = ponderResult.value
+    } else {
+      ponderError =
+        ponderResult.reason instanceof Error
+          ? ponderResult.reason.message
+          : String(ponderResult.reason)
     }
+
+    if (!ponder?.vault && onChain.onChain.vaultId > 0n) {
+      try {
+        ponder = await loadPonderProfile(address, onChain.onChain.vaultId)
+        ponderError = null
+      } catch (retryError) {
+        ponderError =
+          retryError instanceof Error ? retryError.message : String(retryError)
+      }
+    }
+
+    if (!ponder?.vault) {
+      try {
+        const discovery = await fetchDiscoveryVaults('newest', 100)
+        const matched =
+          discovery.vaults.find(
+            (vault) => vault.tipster.toLowerCase() === address.toLowerCase()
+          ) ?? null
+        if (matched) {
+          let handle = ponder?.handle ?? matched.tipsterHandle ?? null
+          if (!handle) {
+            try {
+              const names = await ponderQuery<{
+                tipsterNames: { items: Array<{ name: string }> }
+              }>(
+                `query TipsterName($address: String!) {
+                  tipsterNames(where: { address: $address }, limit: 1) {
+                    items { name }
+                  }
+                }`,
+                { address: address.toLowerCase() }
+              )
+              handle = names.tipsterNames.items[0]?.name ?? null
+            } catch {
+              // Handle lookup is best-effort.
+            }
+          }
+
+          ponder = {
+            positions: ponder?.positions ?? [],
+            vault: { ...matched, tipsterHandle: matched.tipsterHandle || handle || '' },
+            handle,
+          }
+          ponderError = null
+        }
+      } catch {
+        // Discovery fallback is best-effort.
+      }
+    }
+
+    const mergedVault = ponder?.vault ?? onChain.chainVault
+    const mergedHandle = ponder?.handle ?? onChain.onChain.handle ?? mergedVault?.tipsterHandle ?? null
+    const hasVault = Boolean(mergedVault) || onChain.onChain.hasVault || Boolean(ponder?.vault)
+
+    setOnChainHasVault(hasVault)
+    setTipsterHandle(mergedHandle || null)
+    setTipsterVault(mergedVault)
+    setVaultFromIndexer(Boolean(ponder?.vault))
+    setPositions(ponder?.positions ?? [])
+    setError(mergedVault || hasVault ? null : ponderError)
+
+    setIsLoading(false)
+    setIsIndexerLoading(false)
   }, [address])
 
   useEffect(() => {

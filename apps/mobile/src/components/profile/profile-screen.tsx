@@ -1,5 +1,5 @@
 import { BrandHeader } from '@/components/ui/brand-header'
-import { PitchBackdrop } from '@/components/ui/pitch-backdrop'
+import { ScreenBackdrop } from '@/components/ui/screen-backdrop'
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { TIPSTER_NAME_PATTERN, TIPSTER_NAME_NO_EDGE_UNDERSCORE } from '@/config/theta'
@@ -65,7 +65,7 @@ export function ProfileScreen() {
 
   const hasHandle = Boolean(tipsterHandle || tipsterVault?.tipsterHandle)
   const needsVault = !tipsterVault && !onChainHasVault
-  const needsSetup = needsVault || !hasHandle
+  const needsSetup = !isTipster
 
   const onSetupTipster = useCallback(async () => {
     if (!address || hasSkippedWallet) {
@@ -119,7 +119,7 @@ export function ProfileScreen() {
 
   return (
     <View style={styles.container}>
-      <PitchBackdrop />
+      <ScreenBackdrop />
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
@@ -357,9 +357,7 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.md,
     padding: 14,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.primary,
+    borderColor: colors.borderNeon,
     gap: 8,
   },
   cardHeaderRow: {

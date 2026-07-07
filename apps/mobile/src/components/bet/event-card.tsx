@@ -3,7 +3,10 @@ import { TeamLogo } from '@/components/bet/team-logo'
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { useGameLogos } from '@/hooks/use-game-logos'
+import { useLiveMatchStats } from '@/hooks/use-live-match-stats'
 import { getLiveLabel } from '@/services/azuro/feed'
+import { formatLiveMatchScore, formatLiveMinuteLabel } from '@/services/sports-media/live-match'
+import type { LiveMatchStats } from '@/services/sports-media/live-match'
 import type { GameData } from '@azuro-org/toolkit'
 import { GameState } from '@azuro-org/toolkit'
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
@@ -15,6 +18,8 @@ type Props = {
   large?: boolean
   /** When false, skips TheSportsDB logo fetch (Azuro + shield fallback only). */
   resolveLogos?: boolean
+  /** Pass stats from parent to avoid duplicate live polling. */
+  liveStats?: LiveMatchStats | null
 }
 
 export function EventCard({
@@ -23,11 +28,20 @@ export function EventCard({
   compact = false,
   large = false,
   resolveLogos = true,
+  liveStats: liveStatsProp,
 }: Props) {
   const [home, away] = game.participants
   const isLive = game.state === GameState.Live
   const logoSize = large ? 56 : compact ? 36 : 44
   const { home: homeLogo, away: awayLogo } = useGameLogos(resolveLogos ? game : null)
+  const { stats: fetchedLiveStats } = useLiveMatchStats(
+    isLive && liveStatsProp === undefined ? game : null
+  )
+  const liveStats = liveStatsProp !== undefined ? liveStatsProp : fetchedLiveStats
+  const liveScore = isLive ? formatLiveMatchScore(liveStats) : null
+  const statusLabel = isLive
+    ? formatLiveMinuteLabel(liveStats, getLiveLabel(game))
+    : getLiveLabel(game)
 
   const content = (
     <>
@@ -40,7 +54,7 @@ export function EventCard({
         />
         <View style={[styles.statusPill, isLive && styles.statusPillLive]}>
           <Text style={[styles.statusText, isLive && styles.statusTextLive]}>
-            {getLiveLabel(game)}
+            {statusLabel}
           </Text>
         </View>
       </View>
@@ -58,7 +72,11 @@ export function EventCard({
           </Text>
         </View>
 
-        <Text style={styles.vs}>vs</Text>
+        {liveScore ? (
+          <Text style={[styles.scoreCenter, large && styles.scoreCenterLarge]}>{liveScore}</Text>
+        ) : (
+          <Text style={styles.vs}>vs</Text>
+        )}
 
         <View style={styles.teamCol}>
           <TeamLogo
@@ -93,11 +111,9 @@ export function EventCard({
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
+    borderColor: colors.borderNeon,
     borderWidth: 1,
     borderRadius: theme.radius.md,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.pitchLine,
     padding: 12,
     gap: 10,
   },
@@ -157,5 +173,16 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 1,
+  },
+  scoreCenter: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    minWidth: 52,
+    textAlign: 'center',
+  },
+  scoreCenterLarge: {
+    fontSize: 20,
   },
 })

@@ -1,7 +1,7 @@
 import { Download, FastForward, Wallet } from 'lucide-react-native'
 import React from 'react'
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
-import { PitchBackdrop } from '@/components/ui/pitch-backdrop'
+import { ScreenBackdrop } from '@/components/ui/screen-backdrop'
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 
@@ -22,7 +22,7 @@ interface Props {
 export const OnBoardingWelcome: React.FC<Props> = ({ title, subtitle, actionButtons }) => {
   return (
     <View style={styles.container}>
-      <PitchBackdrop />
+      <ScreenBackdrop />
       <View style={styles.content}>
         <View style={styles.brandBlock}>
           <View style={styles.brandMark} />

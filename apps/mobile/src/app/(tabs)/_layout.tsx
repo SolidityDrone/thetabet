@@ -1,7 +1,7 @@
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { useTabBarHeight } from '@/hooks/use-tab-bar-height'
-import { MessageCircle, Radio, User, Wallet } from 'lucide-react-native'
+import { MessageCircle, Radio, Landmark, User, Wallet } from 'lucide-react-native'
 import { Tabs } from 'expo-router'
 import { Platform, StyleSheet, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -42,6 +42,15 @@ export default function TabsLayout() {
           title: 'Matches',
           tabBarIcon: ({ color, size, focused }) => (
             <Radio color={color} size={size - 1} strokeWidth={focused ? 2.5 : 2} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="vaults"
+        options={{
+          title: 'Vaults',
+          tabBarIcon: ({ color, size, focused }) => (
+            <Landmark color={color} size={size - 1} strokeWidth={focused ? 2.5 : 2} />
           ),
         }}
       />

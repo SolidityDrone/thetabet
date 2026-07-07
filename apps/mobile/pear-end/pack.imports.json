@@ -6,6 +6,7 @@
   "corestore": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/corestore",
   "hyperswarm": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/hyperswarm",
   "hypercore-crypto": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/hypercore-crypto",
+  "sodium-universal": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/sodium-universal",
   "bare-rpc": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/bare-rpc",
   "bare-kit": "/home/drone/projects/ThethaBet/apps/mobile/node_modules/bare-kit"
 }

@@ -26,6 +26,10 @@ async function boot () {
     if (!rpc) return
     const event = rpc.request(COMMANDS.MESSAGE_EVENT)
     event.send(Buffer.from(JSON.stringify(message)))
+  }, () => {
+    if (!rpc) return
+    const event = rpc.request(COMMANDS.CONTACTS_CHANGED_EVENT)
+    event.send(Buffer.from(JSON.stringify({ ok: true })))
   })
 
   rpc = new RPC(IPC, async (req) => {
@@ -63,6 +67,27 @@ async function boot () {
           return
         case COMMANDS.GET_TIPSTER_PROFILE:
           replyJson(req, await chat.getTipsterProfile())
+          return
+        case COMMANDS.REGISTER_HANDLE:
+          replyJson(req, await chat.announceHandle(parsePayload(req).handle))
+          return
+        case COMMANDS.LOOKUP_HANDLE:
+          replyJson(req, await chat.lookupHandle(parsePayload(req).handle))
+          return
+        case COMMANDS.SEND_CONTACT_REQUEST:
+          replyJson(req, await chat.sendContactRequest(parsePayload(req)))
+          return
+        case COMMANDS.LIST_CONTACTS:
+          replyJson(req, await chat.listContacts())
+          return
+        case COMMANDS.RESPOND_CONTACT_REQUEST:
+          replyJson(req, await chat.respondContactRequest(parsePayload(req)))
+          return
+        case COMMANDS.LIST_DMS:
+          replyJson(req, await chat.listDms())
+          return
+        case COMMANDS.SEND_DM:
+          replyJson(req, await chat.sendDmMessage(parsePayload(req)))
           return
         default:
           replyJson(req, { error: 'Unknown command ' + req.command })

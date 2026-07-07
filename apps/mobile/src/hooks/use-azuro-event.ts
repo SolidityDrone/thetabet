@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { fetchGameById, fetchGameConditions } from '@/services/azuro/feed'
 import {
   getAzuroOnChainMarketStatus,
-  isAzuroGameOnChain,
   type AzuroOnChainMarketStatus,
 } from '@/services/azuro/onchain-feed'
 import type { ConditionDetailedData, GameData } from '@azuro-org/toolkit'
@@ -13,6 +12,7 @@ export function useAzuroEvent(gameId: string | undefined) {
   const [isOnChain, setIsOnChain] = useState<boolean | null>(null)
   const [marketStatus, setMarketStatus] = useState<AzuroOnChainMarketStatus | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isLoadingMarkets, setIsLoadingMarkets] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -23,25 +23,28 @@ export function useAzuroEvent(gameId: string | undefined) {
       setIsOnChain(null)
       setMarketStatus(null)
       setIsLoading(false)
+      setIsLoadingMarkets(false)
       return
     }
 
     setIsRefreshing(true)
     setError(null)
+    setIsLoadingMarkets(true)
+
     try {
-      const [nextGame, nextConditions, onChain] = await Promise.all([
-        fetchGameById(gameId),
-        fetchGameConditions(gameId),
-        isAzuroGameOnChain(gameId),
-      ])
+      const nextGame = await fetchGameById(gameId)
       setGame(nextGame)
+      setIsLoading(false)
+
+      const nextConditions = await fetchGameConditions(gameId)
       setConditions(nextConditions)
-      setIsOnChain(onChain)
+      setIsOnChain(nextConditions.length > 0)
       setMarketStatus(null)
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : String(refreshError))
-    } finally {
       setIsLoading(false)
+    } finally {
+      setIsLoadingMarkets(false)
       setIsRefreshing(false)
     }
   }, [gameId])
@@ -80,6 +83,7 @@ export function useAzuroEvent(gameId: string | undefined) {
     isOnChain,
     marketStatus,
     isLoading,
+    isLoadingMarkets,
     isRefreshing,
     error,
     refresh,

@@ -1,15 +1,9 @@
 import type { Address } from 'viem'
 import { useCallback, useEffect, useState } from 'react'
-import {
-  fetchRemoteBets,
-  loadLocalBets,
-  summarizeBetOrder,
-} from '@/services/azuro/bet-history'
-import type { AzuroPlacedBetRecord } from '@/types/azuro'
+import { fetchAcceptedBetHistory, type BetHistoryItem } from '@/services/azuro/bet-history'
 
 export function useBetHistory(bettor: Address | '') {
-  const [localBets, setLocalBets] = useState<AzuroPlacedBetRecord[]>([])
-  const [remoteBets, setRemoteBets] = useState<ReturnType<typeof summarizeBetOrder>[]>([])
+  const [bets, setBets] = useState<BetHistoryItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -17,16 +11,15 @@ export function useBetHistory(bettor: Address | '') {
   const refresh = useCallback(async () => {
     setIsRefreshing(true)
     setError(null)
-    try {
-      const local = await loadLocalBets()
-      setLocalBets(local)
 
-      if (bettor) {
-        const remote = await fetchRemoteBets(bettor)
-        setRemoteBets(remote.map(summarizeBetOrder))
-      } else {
-        setRemoteBets([])
+    try {
+      if (!bettor) {
+        setBets([])
+        return
       }
+
+      const history = await fetchAcceptedBetHistory(bettor)
+      setBets(history)
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : String(refreshError))
     } finally {
@@ -36,12 +29,12 @@ export function useBetHistory(bettor: Address | '') {
   }, [bettor])
 
   useEffect(() => {
+    setIsLoading(true)
     refresh()
   }, [refresh])
 
   return {
-    localBets,
-    remoteBets,
+    bets,
     isLoading,
     isRefreshing,
     error,

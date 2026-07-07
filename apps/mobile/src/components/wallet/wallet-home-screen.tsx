@@ -1,7 +1,7 @@
 import { WalletActionRow } from '@/components/wallet/wallet-action-row'
 import { WalletAssetRow } from '@/components/wallet/wallet-asset-row'
 import { BrandHeader } from '@/components/ui/brand-header'
-import { PitchBackdrop } from '@/components/ui/pitch-backdrop'
+import { ScreenBackdrop } from '@/components/ui/screen-backdrop'
 import {
   AZURO_BET_TOKEN_EXPLORER_URL,
   AZURO_BETTING_GUIDE_URL,
@@ -25,10 +25,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 export function WalletHomeScreen() {
-  const insets = useSafeAreaInsets()
   const router = useDebouncedNavigation()
   const { useRealWallet } = useAppMode()
   const {
@@ -110,8 +108,8 @@ export function WalletHomeScreen() {
   }, [])
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <PitchBackdrop />
+    <View style={styles.container}>
+      <ScreenBackdrop />
       <BrandHeader
         title="Wallet"
         subtitle={`${chain.name} · ${shortAddress || 'No address'}`}
@@ -287,11 +285,9 @@ const styles = StyleSheet.create({
   },
   balanceCard: {
     backgroundColor: colors.card,
-    borderColor: colors.borderNeon,
+    borderColor: colors.gold,
     borderWidth: 1,
     borderRadius: theme.radius.md,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.gold,
     padding: 20,
     alignItems: 'center',
     marginBottom: 8,

@@ -32,8 +32,6 @@ const styles = StyleSheet.create({
   badgeSelected: {
     borderColor: colors.primary,
     backgroundColor: colors.neonMuted,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.primary,
   },
   label: {
     ...theme.typography.odds,

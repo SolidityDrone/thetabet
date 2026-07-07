@@ -94,6 +94,13 @@ export const thetaSingletonAbi = [
     outputs: [{ name: '', type: 'uint256' }],
     stateMutability: 'view',
   },
+  {
+    type: 'function',
+    name: 'isWhitelisted',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'view',
+  },
 ] as const
 
 export const tipsterVaultAbi = [
@@ -117,6 +124,73 @@ export const tipsterVaultAbi = [
     inputs: [],
     outputs: [{ name: '', type: 'uint256' }],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'previewDeposit',
+    inputs: [{ name: 'assets', type: 'uint256' }],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'deposit',
+    inputs: [
+      { name: 'assets', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+    ],
+    outputs: [{ name: 'shares', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'balanceOf',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'previewWithdraw',
+    inputs: [{ name: 'assets', type: 'uint256' }],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'previewRedeem',
+    inputs: [{ name: 'shares', type: 'uint256' }],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'maxWithdraw',
+    inputs: [{ name: 'owner', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'withdraw',
+    inputs: [
+      { name: 'assets', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'owner', type: 'address' },
+    ],
+    outputs: [{ name: 'shares', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'redeem',
+    inputs: [
+      { name: 'shares', type: 'uint256' },
+      { name: 'receiver', type: 'address' },
+      { name: 'owner', type: 'address' },
+    ],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+    stateMutability: 'nonpayable',
   },
 ] as const
 
@@ -143,6 +217,28 @@ export function calcRoiPercent(totalStaked: bigint, totalPayout: bigint) {
   const staked = Number(totalStaked) / 10 ** BET_TOKEN_DECIMALS
   const payout = Number(totalPayout) / 10 ** BET_TOKEN_DECIMALS
   return ((payout - staked) / staked) * 100
+}
+
+export function calcAverageWinOdds(
+  bets: Array<{ stake: string; payout: string; lifecycle: number }>
+) {
+  const odds: number[] = []
+
+  for (const bet of bets) {
+    if (bet.lifecycle !== 4) continue
+    const stake = BigInt(bet.stake || '0')
+    const payout = BigInt(bet.payout || '0')
+    if (stake <= 0n || payout <= 0n) continue
+    odds.push(Number(payout) / Number(stake))
+  }
+
+  if (odds.length === 0) return null
+  return odds.reduce((sum, value) => sum + value, 0) / odds.length
+}
+
+export function formatAverageOdds(odds: number | null | undefined) {
+  if (odds === null || odds === undefined || !Number.isFinite(odds)) return '—'
+  return `${odds.toFixed(2)}x`
 }
 
 export function isThetaDeployed() {

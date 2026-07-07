@@ -1,39 +1,40 @@
-import { Download, FastForward, Wallet } from 'lucide-react-native';
-import React from 'react';
-import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { colors } from '@/constants/colors';
+import { Download, FastForward, Wallet } from 'lucide-react-native'
+import React from 'react'
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { PitchBackdrop } from '@/components/ui/pitch-backdrop'
+import { colors } from '@/constants/colors'
+import { theme } from '@/constants/theme'
 
 interface ActionButton {
-  id: number;
-  title: string;
-  iconName: string;
-  variant: 'filled' | 'tinted';
-  onPress: () => void;
+  id: number
+  title: string
+  iconName: string
+  variant: 'filled' | 'tinted'
+  onPress: () => void
 }
 
 interface Props {
-  title: string;
-  subtitle: string;
-  actionButtons: ActionButton[];
+  title: string
+  subtitle: string
+  actionButtons: ActionButton[]
 }
 
 export const OnBoardingWelcome: React.FC<Props> = ({ title, subtitle, actionButtons }) => {
   return (
     <View style={styles.container}>
+      <PitchBackdrop />
       <View style={styles.content}>
-        <View style={styles.illustrationContainer}>
-          <Image
-            source={require('../../../assets/images/wdk-logo.png')}
-            style={styles.wdkLogo}
-            resizeMode="contain"
-          />
+        <View style={styles.brandBlock}>
+          <View style={styles.brandMark} />
+          <Text style={styles.brand}>THETABET</Text>
+          <Text style={styles.tagline}>Live football · On-chain betting</Text>
         </View>
 
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.subtitle}>{subtitle}</Text>
 
         <View style={styles.actionButtonsContainer}>
-          {actionButtons.map(button => (
+          {actionButtons.map((button) => (
             <TouchableOpacity
               key={button.id}
               style={[
@@ -46,20 +47,20 @@ export const OnBoardingWelcome: React.FC<Props> = ({ title, subtitle, actionButt
               <View style={styles.buttonContent}>
                 {button.iconName === 'wallet' && (
                   <Wallet
-                    size={20}
-                    color={button.variant === 'filled' ? colors.black : colors.primary}
+                    size={18}
+                    color={button.variant === 'filled' ? colors.onPrimary : colors.primary}
                   />
                 )}
                 {button.iconName === 'download' && (
                   <Download
-                    size={20}
-                    color={button.variant === 'filled' ? colors.black : colors.primary}
+                    size={18}
+                    color={button.variant === 'filled' ? colors.onPrimary : colors.primary}
                   />
                 )}
                 {button.iconName === 'skip' && (
                   <FastForward
-                    size={20}
-                    color={button.variant === 'filled' ? colors.black : colors.primary}
+                    size={18}
+                    color={button.variant === 'filled' ? colors.onPrimary : colors.primary}
                   />
                 )}
                 <Text
@@ -76,8 +77,8 @@ export const OnBoardingWelcome: React.FC<Props> = ({ title, subtitle, actionButt
         </View>
       </View>
     </View>
-  );
-};
+  )
+}
 
 const styles = StyleSheet.create({
   container: {
@@ -86,65 +87,76 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    paddingHorizontal: 24,
+    paddingHorizontal: theme.spacing.xxl,
     justifyContent: 'center',
     alignItems: 'flex-start',
   },
-  illustrationContainer: {
-    width: '100%',
-    alignItems: 'center',
-    marginBottom: 32,
+  brandBlock: {
+    marginBottom: theme.spacing.xxl,
+    gap: 6,
   },
-  wdkLogo: {
-    width: 280,
-    height: 280,
+  brandMark: {
+    width: 10,
+    height: 10,
+    backgroundColor: colors.primary,
+    transform: [{ rotate: '45deg' }],
+    marginBottom: 4,
+  },
+  brand: {
+    ...theme.typography.caption,
+    color: colors.gold,
+    letterSpacing: 2,
+    fontSize: 12,
+  },
+  tagline: {
+    color: colors.textTertiary,
+    fontSize: 12,
+    fontWeight: '600',
   },
   title: {
-    fontSize: 28,
-    fontWeight: 'bold',
+    fontSize: 26,
+    fontWeight: '800',
     color: colors.text,
-    textAlign: 'left',
-    alignSelf: 'stretch',
-    marginBottom: 16,
+    letterSpacing: -0.3,
+    marginBottom: 10,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 14,
     color: colors.textSecondary,
-    textAlign: 'left',
-    alignSelf: 'stretch',
-    marginBottom: 48,
+    lineHeight: 21,
+    marginBottom: 36,
   },
   actionButtonsContainer: {
     width: '100%',
-    gap: 12,
+    gap: 10,
   },
   actionButton: {
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: theme.radius.sharp,
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: colors.primary,
+    borderWidth: 1,
+    borderColor: colors.borderNeon,
   },
   filledButton: {
     backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    borderColor: colors.primaryDim,
   },
   tintedButton: {
-    backgroundColor: colors.tintedBackground,
-    borderColor: colors.primary,
+    backgroundColor: colors.neonMuted,
   },
   actionButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '800',
     color: colors.primary,
+    letterSpacing: 0.3,
   },
   filledButtonText: {
-    color: colors.black,
+    color: colors.onPrimary,
   },
   buttonContent: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-});
+})

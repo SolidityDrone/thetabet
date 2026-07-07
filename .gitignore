@@ -18,3 +18,7 @@ apps/mobile/.wdk/
 
 # Peer local store
 tools/peer/.peer-store/
+
+# Ponder local state
+ponder/.ponder/
+ponder/pglite/

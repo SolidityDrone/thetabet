@@ -1,4 +1,6 @@
-export type ThetaChainId = 'polygonAmoy'
+import { THETA_DEPLOYMENT } from '@/config/contracts.generated'
+
+export type ThetaChainId = 'polygon'
 
 export type ThetaAssetId = 'matic' | 'betToken'
 
@@ -21,44 +23,51 @@ export interface ThetaChainDefinition {
   nativeSymbol: string
   icon: number
   assets: ThetaAssetDefinition[]
-  /** WDK network key when using real wallet addresses */
-  wdkNetworkKey?: 'polygon' | 'ethereum'
+  /** WDK worklet network key — must be `polygon` (Polygon mainnet is chainId 137 in get-chains-config). */
+  wdkNetworkKey: 'polygon'
 }
 
-export const DEFAULT_CHAIN_ID: ThetaChainId = 'polygonAmoy'
+export const DEFAULT_CHAIN_ID: ThetaChainId = 'polygon'
+
+/** Network name the WDK worklet expects (Blockchain.Polygon — not `polygon` app id). */
+export const WDK_NETWORK_KEY = 'polygon' as const
+
+/** Polygon JSON-RPC — override with EXPO_PUBLIC_POLYGON_RPC_URL in .env */
+export const POLYGON_RPC_URL =
+  process.env.EXPO_PUBLIC_POLYGON_RPC_URL ?? THETA_DEPLOYMENT.rpcUrl
 
 export const THETA_CHAINS: Record<ThetaChainId, ThetaChainDefinition> = {
-  polygonAmoy: {
-    id: 'polygonAmoy',
-    name: 'Polygon Amoy',
-    shortName: 'Amoy',
-    chainId: 80002,
-    rpcUrl: 'https://rpc-amoy.polygon.technology',
-    explorerUrl: 'https://amoy.polygonscan.com',
-    nativeSymbol: 'MATIC',
+  polygon: {
+    id: 'polygon',
+    name: 'Polygon',
+    shortName: 'Polygon',
+    chainId: 137,
+    rpcUrl: POLYGON_RPC_URL,
+    explorerUrl: 'https://polygonscan.com',
+    nativeSymbol: 'POL',
     icon: require('../../assets/images/chains/polygon-matic-logo.png'),
     wdkNetworkKey: 'polygon',
     assets: [
       {
         id: 'matic',
         name: 'Polygon',
-        symbol: 'MATIC',
+        symbol: 'POL',
         decimals: 18,
         icon: require('../../assets/images/chains/polygon-matic-logo.png'),
       },
       {
         id: 'betToken',
-        name: 'Azuro Bet Token',
-        symbol: 'BET',
+        name: 'Tether USD',
+        symbol: 'USDT',
         decimals: 6,
-        contractAddress: '0xCf1b86ceD971b88C042C64A9c099377e2738073C',
+        contractAddress: THETA_DEPLOYMENT.betToken,
         icon: require('../../assets/images/tokens/tether-usdt-logo.png'),
       },
     ],
   },
 }
 
-export const ENABLED_CHAIN_IDS: ThetaChainId[] = ['polygonAmoy']
+export const ENABLED_CHAIN_IDS: ThetaChainId[] = ['polygon']
 
 export function getChain(chainId: ThetaChainId = DEFAULT_CHAIN_ID) {
   return THETA_CHAINS[chainId]

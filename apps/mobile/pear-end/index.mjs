@@ -22,6 +22,12 @@ function parsePayload (req) {
 }
 
 async function boot () {
+  chat = new PearChat(storagePath, (message) => {
+    if (!rpc) return
+    const event = rpc.request(COMMANDS.MESSAGE_EVENT)
+    event.send(Buffer.from(JSON.stringify(message)))
+  })
+
   rpc = new RPC(IPC, async (req) => {
     try {
       switch (req.command) {
@@ -65,12 +71,6 @@ async function boot () {
       const message = error && error.message ? error.message : String(error)
       replyJson(req, { error: message })
     }
-  })
-
-  chat = new PearChat(storagePath, (message) => {
-    if (!rpc) return
-    const event = rpc.request(COMMANDS.MESSAGE_EVENT)
-    event.send(Buffer.from(JSON.stringify(message)))
   })
 
   await chat.ready

@@ -5,6 +5,7 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import parseWorkletError from '@/utils/parse-worklet-error';
+import { clearEmptyWalletAddressCache } from '@/services/patch-wdk-service';
 import { colors } from '@/constants/colors';
 import getErrorMessage from '@/utils/get-error-message';
 
@@ -31,6 +32,7 @@ export default function AuthorizeScreen() {
     setError(null);
 
     try {
+      await clearEmptyWalletAddressCache();
       const isDone = await unlockWallet();
       if (isDone) {
         router.replace('/(tabs)');

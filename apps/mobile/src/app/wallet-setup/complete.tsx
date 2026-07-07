@@ -1,4 +1,6 @@
 import { CommonActions, useNavigation } from '@react-navigation/native';
+import { clearEmptyWalletAddressCache } from '@/services/patch-wdk-service'
+import { useAppMode } from '@/context/app-mode'
 import { useWallet } from '@tetherto/wdk-react-native-provider';
 import { useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useState } from 'react';
@@ -11,6 +13,7 @@ export default function CompleteScreen() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ walletName: string; mnemonic: string }>();
   const { createWallet, isLoading } = useWallet();
+  const { useRealWallet } = useAppMode();
   const [walletCreated, setWalletCreated] = useState(false);
 
   useEffect(() => {
@@ -26,12 +29,15 @@ export default function CompleteScreen() {
       const walletName = params.walletName || 'My Wallet';
       const mnemonic = params.mnemonic.split(',').join(' ');
 
+      await clearEmptyWalletAddressCache();
+
       // Use the wallet context to create the wallet
       await createWallet({
         name: walletName,
         mnemonic,
       });
 
+      await useRealWallet();
       setWalletCreated(true);
     } catch (error) {
       console.error('Failed to create wallet:', error);

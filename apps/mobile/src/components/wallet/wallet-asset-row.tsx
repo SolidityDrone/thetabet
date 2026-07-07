@@ -29,7 +29,7 @@ export function WalletAssetRow({ item }: Props) {
       </View>
       <View style={styles.balanceCol}>
         <Text style={styles.balance}>{formatDisplayBalance(item.balance, item.asset.symbol)}</Text>
-        <Text style={styles.chainHint}>Polygon Amoy</Text>
+        <Text style={styles.chainHint}>Polygon</Text>
       </View>
     </View>
   )

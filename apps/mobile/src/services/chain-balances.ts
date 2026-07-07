@@ -75,18 +75,14 @@ export async function fetchChainBalances(
 
   return Promise.all(
     chain.assets.map(async (asset) => {
-      try {
-        const balance = asset.contractAddress
-          ? await fetchErc20Balance(chain.rpcUrl, asset.contractAddress, address, asset.decimals)
-          : await fetchNativeBalance(chain.rpcUrl, address)
-        const balanceNumber = Number.parseFloat(balance)
-        return {
-          asset,
-          balance,
-          balanceNumber: Number.isFinite(balanceNumber) ? balanceNumber : 0,
-        }
-      } catch {
-        return { asset, balance: '0', balanceNumber: 0 }
+      const balance = asset.contractAddress
+        ? await fetchErc20Balance(chain.rpcUrl, asset.contractAddress, address, asset.decimals)
+        : await fetchNativeBalance(chain.rpcUrl, address)
+      const balanceNumber = Number.parseFloat(balance)
+      return {
+        asset,
+        balance,
+        balanceNumber: Number.isFinite(balanceNumber) ? balanceNumber : 0,
       }
     })
   )

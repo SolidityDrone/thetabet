@@ -1,0 +1,11 @@
+{
+  "chainId": 80002,
+  "startBlock": 41550782,
+  "network": "polygonAmoy",
+  "deployer": "0xDD7D64BFd13EF3b733374Fc8DE9B9C651487a15D",
+  "thetaSingleton": "0x54e0c63678e21bdd24df135cc27f6ecbfc99e69c",
+  "betToken": "0xcf1b86ced971b88c042c64a9c099377e2738073c",
+  "azuroLP": "0x0a75395ff15d9557424b632cebcac448d66f9779",
+  "azuroCore": "0xcd0db5ef28c3bd3a69283372de923eb4da0585f6",
+  "rpcUrl": "https://rpc-amoy.polygon.technology"
+}

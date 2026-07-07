@@ -2,11 +2,23 @@
   "name": "thetabet",
   "private": true,
   "scripts": {
+    "mobile:kill-metro": "npm --prefix apps/mobile run kill:metro",
     "mobile:start": "npm --prefix apps/mobile start",
     "mobile:open": "npm --prefix apps/mobile run open:android",
     "mobile:android": "npm --prefix apps/mobile run android",
     "mobile:prebuild": "npm --prefix apps/mobile run prebuild:clean -- --platform android",
-    "peer": "pnpm --filter @thetabet/peer start"
+    "peer": "pnpm --filter @thetabet/peer start",
+    "ponder:dev": "bash -lc 'export PATH=\"$HOME/.nvm/versions/node/v20.19.2/bin:$PATH\"; cd ponder && PONDER_NETWORK=polygon npm run dev'",
+    "contracts:deploy-anvil": "bash contracts/script/deploy-anvil.sh",
+    "contracts:anvil-fork": "bash contracts/script/start-anvil-fork.sh",
+    "contracts:anvil-deploy": "bash contracts/script/deploy-anvil.sh",
+    "contracts:anvil-deploy-mocks": "bash contracts/script/deploy-anvil-mocks.sh",
+    "contracts:deploy": "bash contracts/script/deploy-polygon.sh",
+    "contracts:deploy-polygon": "bash contracts/script/deploy-polygon.sh",
+    "contracts:deploy-amoy": "bash contracts/script/deploy-polygon.sh",
+    "contracts:sync": "node tools/scripts/sync-deployment.mjs polygon",
+    "dev:stack": "bash tools/dev-stack.sh",
+    "dev:stack:tunnel": "USE_TUNNEL=1 bash tools/dev-stack.sh"
   },
   "engines": {
     "node": ">=20"

@@ -65,11 +65,13 @@
           "android": {
             "minSdkVersion": 29,
             "compileSdkVersion": 36,
-            "buildToolsVersion": "36.0.0"
+            "buildToolsVersion": "36.0.0",
+            "usesCleartextTraffic": true
           }
         }
       ],
-      "./plugins/withAndroidSubprojects.js"
+      "./plugins/withAndroidSubprojects.js",
+      "./plugins/withAndroidCleartextLocalhost.js"
     ],
     "experiments": {
       "typedRoutes": true,

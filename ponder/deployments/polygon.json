@@ -1,0 +1,11 @@
+{
+  "chainId": 137,
+  "startBlock": 89822066,
+  "network": "polygon",
+  "deployer": "0xDD7D64BFd13EF3b733374Fc8DE9B9C651487a15D",
+  "thetaSingleton": "0x54e0c63678e21bdd24df135cc27f6ecbfc99e69c",
+  "betToken": "0xc2132d05d31c914a87c6611c10748aeb04b58e8f",
+  "azuroLP": "0x0fa7fb5407ea971694652e6e16c12a52625de1b8",
+  "azuroCore": "0xf9548be470a4e130c90cea8b179fcd66d2972ac7",
+  "rpcUrl": "https://polygon-bor-rpc.publicnode.com"
+}

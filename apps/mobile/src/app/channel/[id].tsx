@@ -26,6 +26,7 @@ export default function ChannelScreen() {
   const insets = useSafeAreaInsets()
   const {
     ready,
+    error,
     identity,
     channels,
     getHistory,
@@ -33,6 +34,7 @@ export default function ChannelScreen() {
     shareChannelKey,
     onMessage,
     ensureStarted,
+    refreshChannels,
   } = usePearChat()
   const [messages, setMessages] = useState<PearMessage[]>([])
   const [draft, setDraft] = useState('')
@@ -47,13 +49,17 @@ export default function ChannelScreen() {
   )
 
   useEffect(() => {
-    ensureStarted().catch(() => {})
-  }, [ensureStarted])
+    ensureStarted()
+      .then(() => refreshChannels())
+      .catch(() => {})
+  }, [ensureStarted, refreshChannels])
 
   useEffect(() => {
     if (!ready || !id) return
 
     let active = true
+    setLoading(true)
+
     getHistory(id)
       .then((history) => {
         if (active) {
@@ -61,9 +67,11 @@ export default function ChannelScreen() {
           setLoading(false)
         }
       })
-      .catch((error) => {
-        Alert.alert('History error', String(error))
-        setLoading(false)
+      .catch((historyError) => {
+        if (active) {
+          Alert.alert('History error', String(historyError))
+          setLoading(false)
+        }
       })
 
     return onMessage((message) => {
@@ -76,6 +84,25 @@ export default function ChannelScreen() {
     })
   }, [ready, id, getHistory, onMessage])
 
+  if (!ready) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator color={colors.primary} />
+        <Text style={styles.meta}>Starting Pear P2P worklet…</Text>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      </View>
+    )
+  }
+
+  if (!channel) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.meta}>Channel not found</Text>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      </View>
+    )
+  }
+
   const handleSend = async () => {
     const text = draft.trim()
     if (!text || !id) return
@@ -85,8 +112,8 @@ export default function ChannelScreen() {
       const message = await sendMessage(id, text)
       setMessages((current) => [...current, message])
       setDraft('')
-    } catch (error) {
-      Alert.alert('Send failed', String(error))
+    } catch (sendError) {
+      Alert.alert('Send failed', String(sendError))
     } finally {
       setSending(false)
     }
@@ -108,15 +135,6 @@ export default function ChannelScreen() {
     } catch (error) {
       Alert.alert('Share failed', String(error))
     }
-  }
-
-  if (!channel) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator color={colors.primary} />
-        <Text style={styles.meta}>Loading channel…</Text>
-      </View>
-    )
   }
 
   return (
@@ -248,6 +266,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'monospace',
     marginTop: 4,
+  },
+  errorText: {
+    color: colors.error,
+    textAlign: 'center',
+    paddingHorizontal: 24,
+    marginTop: 8,
   },
   toolbar: {
     flexDirection: 'row',

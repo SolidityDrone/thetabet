@@ -1,3 +1,6 @@
+import '@/polyfills'
+import { patchBareWorkletApi } from '@/services/patch-bare-api'
+import { patchWdkService } from '@/services/patch-wdk-service'
 import { DarkTheme, ThemeProvider as NavigationThemeProvider } from '@react-navigation/native';
 import { WalletProvider, WDKService } from '@tetherto/wdk-react-native-provider';
 import { ThemeProvider } from '@tetherto/wdk-uikit-react-native';
@@ -13,6 +16,9 @@ import { AppModeProvider } from '@/context/app-mode';
 import { PearChatProvider } from '@/context/pear-chat';
 import { Toaster } from 'sonner-native';
 import { colors } from '@/constants/colors';
+
+patchBareWorkletApi();
+patchWdkService();
 
 SplashScreen.preventAutoHideAsync();
 
@@ -78,12 +84,14 @@ export default function RootLayout() {
           offset={90}
           toastOptions={{
             style: {
-              backgroundColor: colors.background,
+              backgroundColor: colors.card,
               borderWidth: 1,
-              borderColor: colors.border,
+              borderColor: colors.borderNeon,
+              borderLeftWidth: 3,
+              borderLeftColor: colors.primary,
             },
-            titleStyle: { color: colors.text },
-            descriptionStyle: { color: colors.text },
+            titleStyle: { color: colors.text, fontWeight: '700' },
+            descriptionStyle: { color: colors.textSecondary },
           }}
         />
       </ThemeProvider>

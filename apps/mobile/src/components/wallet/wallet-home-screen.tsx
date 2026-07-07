@@ -1,15 +1,23 @@
 import { WalletActionRow } from '@/components/wallet/wallet-action-row'
 import { WalletAssetRow } from '@/components/wallet/wallet-asset-row'
+import { BrandHeader } from '@/components/ui/brand-header'
+import { PitchBackdrop } from '@/components/ui/pitch-backdrop'
+import {
+  AZURO_BET_TOKEN_EXPLORER_URL,
+  AZURO_BETTING_GUIDE_URL,
+} from '@/config/azuro'
 import { colors } from '@/constants/colors'
+import { theme } from '@/constants/theme'
 import { useAppMode } from '@/context/app-mode'
 import { useWalletPortfolio } from '@/hooks/use-wallet-portfolio'
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation'
-import { Settings } from 'lucide-react-native'
+import { useTabBarHeight } from '@/hooks/use-tab-bar-height'
+import { Settings, ExternalLink } from 'lucide-react-native'
 import { useCallback } from 'react'
 import {
   ActivityIndicator,
   Alert,
-  Image,
+  Linking,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -27,7 +35,6 @@ export function WalletHomeScreen() {
     chain,
     address,
     shortAddress,
-    walletLabel,
     hasSkippedWallet,
     canSend,
     assets,
@@ -39,7 +46,13 @@ export function WalletHomeScreen() {
   } = useWalletPortfolio()
 
   const handleReceive = useCallback(() => {
-    if (!address) return
+    if (!address) {
+      Alert.alert(
+        'Address not ready',
+        'Your Polygon address is still loading. Wait a moment and try again.'
+      )
+      return
+    }
     router.push({
       pathname: '/receive/details',
       params: {
@@ -54,7 +67,7 @@ export function WalletHomeScreen() {
     if (hasSkippedWallet) {
       Alert.alert(
         'Send requires a real wallet',
-        'Dev skip wallet is read-only on Amoy. Set up a WDK wallet to send tokens.',
+        'Dev skip wallet is read-only. Set up a WDK wallet to send tokens.',
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -76,7 +89,7 @@ export function WalletHomeScreen() {
     if (hasSkippedWallet) {
       Alert.alert(
         'Dev wallet',
-        'Using stub address on Polygon Amoy. Set up a real wallet for signing and sending.',
+        'Using stub address on Polygon. Set up a real wallet for signing and sending.',
         [
           { text: 'OK' },
           {
@@ -90,20 +103,25 @@ export function WalletHomeScreen() {
     router.push('/settings')
   }, [hasSkippedWallet, router, useRealWallet])
 
+  const openFaucet = useCallback((url: string) => {
+    Linking.openURL(url).catch(() => {
+      Alert.alert('Could not open link', url)
+    })
+  }, [])
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Image source={chain.icon} style={styles.chainIcon} resizeMode="contain" />
-          <View>
-            <Text style={styles.walletName}>{walletLabel}</Text>
-            <Text style={styles.address}>{shortAddress || 'No address'}</Text>
-          </View>
-        </View>
-        <TouchableOpacity style={styles.settingsButton} onPress={handleSettings}>
-          <Settings size={22} color={colors.primary} />
-        </TouchableOpacity>
-      </View>
+      <PitchBackdrop />
+      <BrandHeader
+        title="Wallet"
+        subtitle={`${chain.name} · ${shortAddress || 'No address'}`}
+        compact
+        right={
+          <TouchableOpacity style={styles.settingsButton} onPress={handleSettings}>
+            <Settings size={20} color={colors.primary} />
+          </TouchableOpacity>
+        }
+      />
 
       <View style={styles.chainPillRow}>
         <View style={styles.chainPill}>
@@ -111,10 +129,16 @@ export function WalletHomeScreen() {
         </View>
         {hasSkippedWallet ? (
           <View style={[styles.chainPill, styles.devPill]}>
-            <Text style={styles.devPillText}>Testnet · Dev</Text>
+            <Text style={styles.devPillText}>Dev wallet</Text>
           </View>
         ) : null}
       </View>
+
+      {address ? (
+        <Text style={styles.addressLine} selectable>
+          {address}
+        </Text>
+      ) : null}
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
@@ -129,19 +153,43 @@ export function WalletHomeScreen() {
       >
         <View style={styles.balanceCard}>
           {isLoading ? (
-            <ActivityIndicator color={colors.primary} />
+            <ActivityIndicator color={colors.primary} size="small" />
           ) : (
             <>
               <Text style={styles.balanceLabel}>Total balance</Text>
               <Text style={styles.balanceValue}>
-                {totalMatic.toLocaleString(undefined, { maximumFractionDigits: 4 })} MATIC
+                {totalMatic.toLocaleString(undefined, { maximumFractionDigits: 4 })} {chain.nativeSymbol}
               </Text>
-              <Text style={styles.balanceHint}>Polygon Amoy testnet</Text>
+              <Text style={styles.balanceHint}>Polygon mainnet</Text>
             </>
           )}
         </View>
 
         <WalletActionRow onReceive={handleReceive} onSend={handleSend} />
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Funding</Text>
+          <TouchableOpacity
+            style={styles.faucetRow}
+            onPress={() => openFaucet(AZURO_BETTING_GUIDE_URL)}
+          >
+            <View style={styles.faucetTextWrap}>
+              <Text style={styles.faucetTitle}>Azuro betting guide</Text>
+              <Text style={styles.faucetSubtitle}>How Azuro personal bets work on Polygon</Text>
+            </View>
+            <ExternalLink size={18} color={colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.faucetRow, styles.faucetRowLast]}
+            onPress={() => openFaucet(AZURO_BET_TOKEN_EXPLORER_URL)}
+          >
+            <View style={styles.faucetTextWrap}>
+              <Text style={styles.faucetTitle}>USDT on Polygon</Text>
+              <Text style={styles.faucetSubtitle}>Azuro bet token on Polygonscan</Text>
+            </View>
+            <ExternalLink size={18} color={colors.primary} />
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Assets</Text>
@@ -151,7 +199,7 @@ export function WalletHomeScreen() {
           ))}
           {assets.every((item) => item.balanceNumber === 0) ? (
             <Text style={styles.emptyHint}>
-              Fund this address from a Polygon Amoy faucet to see balances update.
+              Fund this address with USDT and POL on Polygon to see balances update.
             </Text>
           ) : null}
         </View>
@@ -217,6 +265,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  addressLine: {
+    color: colors.textSecondary,
+    fontFamily: 'monospace',
+    fontSize: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
   devPill: {
     borderColor: colors.warning,
     backgroundColor: colors.warningBackground,
@@ -232,13 +287,15 @@ const styles = StyleSheet.create({
   },
   balanceCard: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
+    borderColor: colors.borderNeon,
     borderWidth: 1,
-    borderRadius: 20,
-    padding: 24,
+    borderRadius: theme.radius.md,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.gold,
+    padding: 20,
     alignItems: 'center',
     marginBottom: 8,
-    minHeight: 120,
+    minHeight: 108,
     justifyContent: 'center',
   },
   balanceLabel: {
@@ -248,8 +305,9 @@ const styles = StyleSheet.create({
   },
   balanceValue: {
     color: colors.text,
-    fontSize: 34,
-    fontWeight: '700',
+    fontSize: 30,
+    fontWeight: '900',
+    letterSpacing: -0.5,
   },
   balanceHint: {
     color: colors.textTertiary,
@@ -257,19 +315,18 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   section: {
-    marginTop: 16,
+    marginTop: 12,
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderWidth: 1,
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingTop: 14,
+    borderRadius: theme.radius.md,
+    paddingHorizontal: 12,
+    paddingTop: 12,
     paddingBottom: 4,
   },
   sectionTitle: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: '700',
+    ...theme.typography.caption,
+    color: colors.gold,
     marginBottom: 4,
   },
   emptyHint: {
@@ -283,5 +340,30 @@ const styles = StyleSheet.create({
     color: colors.error,
     fontSize: 13,
     marginBottom: 8,
+  },
+  faucetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    gap: 12,
+  },
+  faucetRowLast: {
+    borderBottomWidth: 0,
+  },
+  faucetTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  faucetTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  faucetSubtitle: {
+    color: colors.textTertiary,
+    fontSize: 12,
   },
 })

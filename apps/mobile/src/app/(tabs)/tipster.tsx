@@ -94,10 +94,10 @@ export default function TipsterScreen() {
       </Text>
 
       <View style={styles.card}>
-        <Text style={styles.label}>Wallet (Amoy)</Text>
+        <Text style={styles.label}>Wallet (Polygon)</Text>
         <Text style={styles.mono}>{walletAddress}</Text>
         {hasSkippedWallet ? (
-          <Text style={styles.hint}>Dev skip wallet — Polygon Amoy test address</Text>
+          <Text style={styles.hint}>Dev skip wallet — Polygon address</Text>
         ) : null}
       </View>
 

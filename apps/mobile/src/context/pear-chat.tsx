@@ -61,7 +61,7 @@ async function callRpc<T>(
   rpc: RPC,
   command: number,
   payload?: unknown,
-  timeoutMs = 15000
+  timeoutMs = 30000
 ): Promise<T> {
   const req = rpc.request(command)
   req.send(Buffer.from(payload ? JSON.stringify(payload) : '') as never)
@@ -109,6 +109,10 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
 
     const worklet = new Worklet()
     worklet.start('/pear-end.bundle', pearBundle, [storagePath])
+
+    // Wait for pear-end to finish Corestore boot before RPC calls.
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
     workletRef.current = worklet
 
     const rpc = new RPC(worklet.IPC as never, async (req) => {

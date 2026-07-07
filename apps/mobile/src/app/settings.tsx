@@ -1,9 +1,8 @@
 import Header from '@/components/header';
 import { clearAvatar } from '@/config/avatar-options';
-import { networkConfigs } from '@/config/networks';
+import { useThetaWalletAddress } from '@/hooks/use-theta-wallet-address'
 import useWalletAvatar from '@/hooks/use-wallet-avatar';
-import getDisplaySymbol from '@/utils/get-display-symbol';
-import { NetworkType, useWallet } from '@tetherto/wdk-react-native-provider';
+import { useWallet } from '@tetherto/wdk-react-native-provider';
 import * as Clipboard from 'expo-clipboard';
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation';
 import { Copy, Info, Shield, Trash2, Wallet } from 'lucide-react-native';
@@ -16,7 +15,8 @@ import { colors } from '@/constants/colors';
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const router = useDebouncedNavigation();
-  const { wallet, clearWallet, addresses } = useWallet();
+  const { wallet, clearWallet } = useWallet();
+  const { address: polygonAddress, shortAddress: polygonShortAddress } = useThetaWalletAddress();
   const avatar = useWalletAvatar();
 
   const handleDeleteWallet = () => {
@@ -52,16 +52,6 @@ export default function SettingsScreen() {
     toast.success(`${networkName} address copied to clipboard`);
   };
 
-  const formatAddress = (address: string) => {
-    if (!address) return 'N/A';
-    if (address.length <= 15) return address;
-    return `${address.slice(0, 10)}...${address.slice(-10)}`;
-  };
-
-  const getNetworkName = (network: string) => {
-    return networkConfigs[network as NetworkType].name || network;
-  };
-
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <Header title="Settings" />
@@ -90,40 +80,34 @@ export default function SettingsScreen() {
             </View>
 
             <View style={[styles.infoRow, styles.infoRowLast]}>
-              <Text style={styles.infoLabel}>Enabled Assets</Text>
-              <Text style={styles.infoValue}>
-                {wallet?.enabledAssets?.map(asset => getDisplaySymbol(asset)).join(', ') || 'None'}
-              </Text>
+              <Text style={styles.infoLabel}>Network</Text>
+              <Text style={styles.infoValue}>Polygon</Text>
             </View>
           </View>
         </View>
 
-        {/* Network Addresses Section */}
+        {/* Polygon address (used by ThetaBet) */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Shield size={20} color={colors.primary} />
-            <Text style={styles.sectionTitle}>Network Addresses</Text>
+            <Text style={styles.sectionTitle}>Polygon</Text>
           </View>
 
           <View style={styles.addressCard}>
-            {addresses &&
-              Object.entries(addresses).map(([network, address], index, array) => (
-                <TouchableOpacity
-                  key={network}
-                  style={[
-                    styles.addressRow,
-                    index === array.length - 1 ? styles.addressRowLast : null,
-                  ]}
-                  onPress={() => handleCopyAddress(address as string, getNetworkName(network))}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.addressContent}>
-                    <Text style={styles.networkLabel}>{getNetworkName(network)}</Text>
-                    <Text style={styles.addressValue}>{formatAddress(address as string)}</Text>
-                  </View>
-                  <Copy size={18} color={colors.primary} />
-                </TouchableOpacity>
-              ))}
+            <TouchableOpacity
+              style={[styles.addressRow, styles.addressRowLast]}
+              onPress={() => polygonAddress && handleCopyAddress(polygonAddress, 'Polygon')}
+              activeOpacity={0.7}
+              disabled={!polygonAddress}
+            >
+              <View style={styles.addressContent}>
+                <Text style={styles.networkLabel}>Your betting wallet</Text>
+                <Text style={styles.addressValue}>
+                  {polygonAddress || polygonShortAddress || 'Loading…'}
+                </Text>
+              </View>
+              {polygonAddress ? <Copy size={18} color={colors.primary} /> : null}
+            </TouchableOpacity>
           </View>
         </View>
 

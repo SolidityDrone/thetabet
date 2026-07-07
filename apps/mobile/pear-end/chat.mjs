@@ -8,6 +8,17 @@ import { identityToJson, loadOrCreateIdentity } from './identity.mjs'
 
 const DIRECTORY_FILE = 'channels.json'
 const PROFILE_FILE = 'tipster-profile.json'
+const SWARM_FLUSH_MS = 6000
+const CORE_UPDATE_MS = 8000
+
+function promiseWithTimeout (promise, timeoutMs, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(label + ' timed out after ' + timeoutMs + 'ms')), timeoutMs)
+    }),
+  ])
+}
 
 export class PearChat {
   constructor (storagePath, onMessage) {
@@ -36,8 +47,11 @@ export class PearChat {
     this.loadDirectory()
     this.loadProfile()
 
+    // Attach saved channels in the background — never block boot on DHT flush.
     for (const channel of this.directory) {
-      await this.attachChannel(channel, false)
+      this.attachChannel(channel, false).catch((error) => {
+        console.error('pear-end attachChannel failed', channel.id, error)
+      })
     }
   }
 
@@ -158,11 +172,29 @@ export class PearChat {
     }
   }
 
+  async ensureRuntime (channelId) {
+    await this.ready
+    let runtime = this.channels.get(channelId)
+    if (runtime) return runtime
+
+    const channel = this.directory.find((entry) => entry.id === channelId)
+    if (!channel) return null
+
+    await this.attachChannel(channel, false)
+    return this.channels.get(channelId) ?? null
+  }
+
   async getHistory (channelId) {
     await this.ready
-    const runtime = this.channels.get(channelId)
+    const runtime = await this.ensureRuntime(channelId)
     if (!runtime) return []
-    await runtime.core.update()
+
+    try {
+      await promiseWithTimeout(runtime.core.update(), CORE_UPDATE_MS, 'core.update')
+    } catch (error) {
+      console.error('pear-end core.update skipped', channelId, error)
+    }
+
     const history = []
     for (let index = 0; index < runtime.core.length; index++) {
       const raw = runtime.core.get(index)
@@ -175,7 +207,7 @@ export class PearChat {
 
   async sendMessage ({ channelId, text }) {
     await this.ready
-    const runtime = this.channels.get(channelId)
+    const runtime = await this.ensureRuntime(channelId)
     if (!runtime) throw new Error('Channel not found: ' + channelId)
 
     const message = {
@@ -238,7 +270,14 @@ export class PearChat {
       server: announce && !channel.isPrivate,
       client: true,
     })
-    await discovery.flushed()
+
+    if (announce && !channel.isPrivate) {
+      try {
+        await promiseWithTimeout(discovery.flushed(), SWARM_FLUSH_MS, 'discovery.flushed')
+      } catch (error) {
+        console.error('pear-end discovery.flushed skipped', channel.id, error)
+      }
+    }
 
     const self = this
     core.on('append', function () {

@@ -1,4 +1,6 @@
+import { clearEmptyWalletAddressCache } from '@/services/patch-wdk-service'
 import avatarOptions, { setAvatar } from '@/config/avatar-options';
+import { useAppMode } from '@/context/app-mode'
 import { CommonActions, useNavigation } from '@react-navigation/native';
 import { useWallet } from '@tetherto/wdk-react-native-provider';
 import { useLocalSearchParams } from 'expo-router';
@@ -27,6 +29,7 @@ export default function ImportNameWalletScreen() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const { createWallet } = useWallet();
+  const { useRealWallet } = useAppMode();
   const [walletName, setWalletName] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState(avatarOptions[0]);
   const [isImporting, setIsImporting] = useState(false);
@@ -43,8 +46,10 @@ export default function ImportNameWalletScreen() {
     setIsImporting(true);
 
     try {
+      await clearEmptyWalletAddressCache();
       // Use the context's createWallet method which handles everything including unlocking
       await createWallet({ name: walletName, mnemonic: seedPhrase });
+      await useRealWallet();
       await setAvatar(selectedAvatar.id);
 
       toast.success('Your wallet has been imported successfully.');

@@ -13,9 +13,8 @@ npm run bundle:pear
 cp -n .env.example .env    # optional WDK indexer API key
 npx expo prebuild --clean --platform android
 npm run android
-npm start
-adb reverse tcp:8081 tcp:8081
-npm run open:android   # force localhost URL (avoids cached LAN IP white screen)
+npm start              # frees port 8081, then starts Metro there
+npm run open:android   # adb reverse + localhost deep link (port 8081)
 ```
 
 Use **npm** in this folder only. After any `npm install`, run `npm run link:bare` again before rebuilding native.
@@ -43,6 +42,22 @@ Test P2P against WSL peer (`tools/peer`):
 ```bash
 cd tools/peer
 node index.mjs --topic <hex-topic-key> --name "WSL peer"
+```
+
+## Metro started on 8082 (8081 busy)?
+
+A leftover Metro from a prior terminal session holds **8081**. `npm start` now runs `kill:metro` first and pins `--port 8081`.
+
+```bash
+npm run kill:metro     # or from repo root: npm run mobile:kill-metro
+npm start
+npm run open:android
+```
+
+If you intentionally run Metro on another port:
+
+```bash
+METRO_PORT=8082 npm run open:android
 ```
 
 ## White screen after splash?

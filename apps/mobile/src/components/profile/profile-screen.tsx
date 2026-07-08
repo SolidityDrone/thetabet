@@ -120,6 +120,16 @@ export function ProfileScreen() {
   return (
     <View style={styles.container}>
       <ScreenBackdrop />
+      <BrandHeader
+        title="Profile"
+        subtitle={shortAddress || 'No wallet'}
+        compact
+        right={
+          <Pressable onPress={refresh} style={styles.refreshButton} accessibilityLabel="Refresh profile">
+            <RefreshCw color={colors.primary} size={18} />
+          </Pressable>
+        }
+      />
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
@@ -130,17 +140,6 @@ export function ProfileScreen() {
           />
         }
       >
-        <BrandHeader
-          title="Profile"
-          subtitle={shortAddress || 'No wallet'}
-          compact
-          right={
-            <Pressable onPress={refresh} style={styles.refreshButton} accessibilityLabel="Refresh profile">
-              <RefreshCw color={colors.primary} size={18} />
-            </Pressable>
-          }
-        />
-
       {error ? (
         <View style={styles.errorCard}>
           <Text style={styles.errorTitle}>Indexer unavailable</Text>
@@ -312,7 +311,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   content: {
-    padding: 20,
+    paddingHorizontal: 16,
+    paddingTop: 8,
     paddingBottom: 40,
     gap: 16,
   },

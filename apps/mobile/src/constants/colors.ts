@@ -1,11 +1,12 @@
-/** ThetaBet — Premium Pro / Night Neon football broadcast theme */
+/** ThetaBet — Pro Black / Neon Pitch theme. Pure-black canvas with a subtle
+ *  vertical gradient and faint brand glows. Neon green + gold stay as accents. */
 export const colors = {
-  // Surfaces
-  background: '#050B14',
-  backgroundElevated: '#08111F',
-  card: '#0F1A2E',
-  cardDark: '#141F35',
-  cardPitch: '#0A1620',
+  // Surfaces — pure black base, near-black elevations
+  background: '#000000',
+  backgroundElevated: '#08090D',
+  card: '#0E1118',
+  cardDark: '#0A0D13',
+  cardPitch: '#08120C',
 
   // Brand
   primary: '#7CFF4F',
@@ -25,8 +26,8 @@ export const colors = {
   textDisabled: '#3D4A63',
 
   // Borders
-  border: '#1E2D4A',
-  borderDark: '#16233B',
+  border: '#1A1F2E',
+  borderDark: '#12161F',
   borderLight: '#243352',
   borderNeon: 'rgba(124, 255, 79, 0.35)',
 
@@ -38,7 +39,7 @@ export const colors = {
   live: '#FF3B5C',
 
   // Semantic fills
-  overlay: 'rgba(2, 6, 14, 0.82)',
+  overlay: 'rgba(0, 0, 0, 0.86)',
   neonMuted: 'rgba(124, 255, 79, 0.1)',
   neonStrong: 'rgba(124, 255, 79, 0.2)',
   goldMuted: 'rgba(232, 197, 71, 0.12)',

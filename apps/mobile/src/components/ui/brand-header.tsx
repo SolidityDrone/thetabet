@@ -34,7 +34,7 @@ export function BrandHeader({
     >
       <View style={styles.left}>
         <View style={styles.brandRow}>
-          <Image source={require('../../assets/images/brand-icon.png')} style={styles.brandIcon} resizeMode="contain" />
+          <Image source={require('../../../assets/images/brand-icon.png')} style={styles.brandIcon} resizeMode="contain" />
           <Text style={styles.brand}>THETABET</Text>
         </View>
         <Text style={[styles.title, compact && styles.titleCompact]}>{title}</Text>

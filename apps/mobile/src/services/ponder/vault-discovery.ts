@@ -66,7 +66,7 @@ const DISCOVER_VAULTS_QUERY = `
         positions(where: { shares_gt: "0" }, limit: 1) {
           totalCount
         }
-        bets(where: { lifecycle: 4 }, limit: 40, orderBy: "closedAt", orderDirection: "desc") {
+        bets(where: { lifecycle: 4 }, limit: 12, orderBy: "closedAt", orderDirection: "desc") {
           items {
             stake
             payout
@@ -100,7 +100,7 @@ const VAULT_DETAIL_QUERY = `
       positions(where: { shares_gt: "0" }, limit: 1) {
         totalCount
       }
-      bets(where: { lifecycle: 4 }, limit: 80, orderBy: "closedAt", orderDirection: "desc") {
+      bets(where: { lifecycle: 4 }, limit: 24, orderBy: "closedAt", orderDirection: "desc") {
         items {
           stake
           payout
@@ -240,7 +240,9 @@ export async function fetchDiscoveryVaults(sortKey: VaultSortKey, limit = 100) {
     orderDirection,
   })
 
-  const vaults = await enrichDiscoveryVaults(data.vaults.items.map(mapDiscoveryVault))
+  // Keep discovery fast: rely on the indexed handle already returned by Ponder.
+  // Per-vault enrichment adds N extra network requests and makes list loading feel slow.
+  const vaults = data.vaults.items.map(mapDiscoveryVault)
   return {
     vaults: sortDiscoveryVaults(vaults, sortKey),
     totalCount: data.vaults.totalCount,

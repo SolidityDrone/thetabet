@@ -2,6 +2,12 @@ import { fetchDiscoveryVaults } from '@/services/ponder/vault-discovery'
 import type { DiscoveryVault, VaultSortKey } from '@/types/vault-discovery'
 import { useCallback, useEffect, useState } from 'react'
 
+const discoveryCache = new Map<
+  VaultSortKey,
+  { vaults: DiscoveryVault[]; totalCount: number; loadedAt: number }
+>()
+const DISCOVERY_CACHE_TTL_MS = 30_000
+
 export function useVaultDiscovery(initialSort: VaultSortKey = 'newest') {
   const [sortKey, setSortKey] = useState<VaultSortKey>(initialSort)
   const [vaults, setVaults] = useState<DiscoveryVault[]>([])
@@ -12,6 +18,15 @@ export function useVaultDiscovery(initialSort: VaultSortKey = 'newest') {
 
   const load = useCallback(
     async (refreshing = false) => {
+      const cached = discoveryCache.get(sortKey)
+      if (!refreshing && cached && Date.now() - cached.loadedAt < DISCOVERY_CACHE_TTL_MS) {
+        setVaults(cached.vaults)
+        setTotalCount(cached.totalCount)
+        setError(null)
+        setIsLoading(false)
+        return
+      }
+
       if (refreshing) {
         setIsRefreshing(true)
       } else {
@@ -21,6 +36,11 @@ export function useVaultDiscovery(initialSort: VaultSortKey = 'newest') {
 
       try {
         const result = await fetchDiscoveryVaults(sortKey)
+        discoveryCache.set(sortKey, {
+          vaults: result.vaults,
+          totalCount: result.totalCount,
+          loadedAt: Date.now(),
+        })
         setVaults(result.vaults)
         setTotalCount(result.totalCount)
       } catch (loadError) {

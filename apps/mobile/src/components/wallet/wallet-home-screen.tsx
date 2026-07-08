@@ -1,23 +1,19 @@
+import { VaultShareRow } from '@/components/wallet/vault-share-row'
 import { WalletActionRow } from '@/components/wallet/wallet-action-row'
 import { WalletAssetRow } from '@/components/wallet/wallet-asset-row'
 import { BrandHeader } from '@/components/ui/brand-header'
 import { ScreenBackdrop } from '@/components/ui/screen-backdrop'
-import {
-  AZURO_BET_TOKEN_EXPLORER_URL,
-  AZURO_BETTING_GUIDE_URL,
-} from '@/config/azuro'
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { useAppMode } from '@/context/app-mode'
 import { useConfirmSheet } from '@/context/confirm-sheet'
+import { useProfileVaults } from '@/hooks/use-profile-vaults'
 import { useWalletPortfolio } from '@/hooks/use-wallet-portfolio'
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation'
-import { useTabBarHeight } from '@/hooks/use-tab-bar-height'
-import { Settings, ExternalLink } from 'lucide-react-native'
+import { Settings } from 'lucide-react-native'
 import { useCallback } from 'react'
 import {
   ActivityIndicator,
-  Linking,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -43,6 +39,12 @@ export function WalletHomeScreen() {
     error,
     refresh,
   } = useWalletPortfolio()
+  const { positions: vaultPositions, refresh: refreshVaults } = useProfileVaults(address ?? '')
+
+  const handleRefresh = useCallback(() => {
+    void refresh()
+    void refreshVaults()
+  }, [refresh, refreshVaults])
 
   const handleReceive = useCallback(async () => {
     if (!address) {
@@ -99,12 +101,6 @@ export function WalletHomeScreen() {
     router.push('/settings')
   }, [confirm, hasSkippedWallet, router, useRealWallet])
 
-  const openFaucet = useCallback((url: string) => {
-    Linking.openURL(url).catch(() => {
-      void alert({ title: 'Could not open link', message: url })
-    })
-  }, [alert])
-
   return (
     <View style={styles.container}>
       <ScreenBackdrop />
@@ -141,7 +137,7 @@ export function WalletHomeScreen() {
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
-            onRefresh={refresh}
+            onRefresh={handleRefresh}
             tintColor={colors.primary}
             colors={[colors.primary]}
           />
@@ -164,36 +160,15 @@ export function WalletHomeScreen() {
         <WalletActionRow onReceive={handleReceive} onSend={handleSend} />
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Funding</Text>
-          <TouchableOpacity
-            style={styles.faucetRow}
-            onPress={() => openFaucet(AZURO_BETTING_GUIDE_URL)}
-          >
-            <View style={styles.faucetTextWrap}>
-              <Text style={styles.faucetTitle}>Azuro betting guide</Text>
-              <Text style={styles.faucetSubtitle}>How Azuro personal bets work on Polygon</Text>
-            </View>
-            <ExternalLink size={18} color={colors.primary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.faucetRow, styles.faucetRowLast]}
-            onPress={() => openFaucet(AZURO_BET_TOKEN_EXPLORER_URL)}
-          >
-            <View style={styles.faucetTextWrap}>
-              <Text style={styles.faucetTitle}>USDT on Polygon</Text>
-              <Text style={styles.faucetSubtitle}>Azuro bet token on Polygonscan</Text>
-            </View>
-            <ExternalLink size={18} color={colors.primary} />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Assets</Text>
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
           {assets.map((item) => (
             <WalletAssetRow key={item.asset.id} item={item} />
           ))}
-          {assets.every((item) => item.balanceNumber === 0) ? (
+          {vaultPositions.map((position) => (
+            <VaultShareRow key={position.id} position={position} />
+          ))}
+          {assets.every((item) => item.balanceNumber === 0) && vaultPositions.length === 0 ? (
             <Text style={styles.emptyHint}>
               Fund this address with USDT and POL on Polygon to see balances update.
             </Text>
@@ -334,30 +309,5 @@ const styles = StyleSheet.create({
     color: colors.error,
     fontSize: 13,
     marginBottom: 8,
-  },
-  faucetRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    gap: 12,
-  },
-  faucetRowLast: {
-    borderBottomWidth: 0,
-  },
-  faucetTextWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  faucetTitle: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  faucetSubtitle: {
-    color: colors.textTertiary,
-    fontSize: 12,
   },
 })

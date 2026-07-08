@@ -32,6 +32,8 @@ type PearChatContextValue = {
   error: string | null
   identity: PearIdentity | null
   channels: PearChannel[]
+  contacts: PearContactsState
+  dms: PearChannel[]
   tipsterProfile: TipsterProfile | null
   createChannel: (name: string, isPrivate: boolean) => Promise<PearChannel>
   joinChannel: (topicKey: string, name?: string) => Promise<JoinChannelResult>

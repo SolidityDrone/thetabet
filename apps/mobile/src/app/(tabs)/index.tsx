@@ -9,14 +9,23 @@ import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation'
 import { useOnChainHandle } from '@/hooks/use-on-chain-handle'
 import { useScreenTopPadding } from '@/hooks/use-screen-top-padding'
 import { useWalletPortfolio } from '@/hooks/use-wallet-portfolio'
-import type { PearChannel } from '@/types/pear'
-import { Lock, Megaphone, MessageCircle, Users } from 'lucide-react-native'
-import { useEffect, useMemo, useState } from 'react'
+import type { PearChannel, PearMessage } from '@/types/pear'
+import {
+  Check,
+  Lock,
+  Megaphone,
+  MessageCircle,
+  Plus,
+  Search,
+  Users,
+  X,
+} from 'lucide-react-native'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Modal,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -24,16 +33,35 @@ import {
   View,
 } from 'react-native'
 
-function filterUserChannels(channels: PearChannel[], pubkey?: string | null) {
-  if (!pubkey) return { publicChannels: [], privateChannels: [] }
+type ChatRow = {
+  channel: PearChannel
+  lastMessage: string | null
+  lastActivityAt: number
+}
 
-  const owned = channels.filter(
-    (channel) => channel.ownerPubkey === pubkey && channel.kind !== 'dm'
+function buildChatRows(
+  channels: PearChannel[],
+  activity: Map<string, { ts: number; text: string }>,
+): ChatRow[] {
+  return channels.map((channel) => {
+    const a = activity.get(channel.id)
+    return {
+      channel,
+      lastMessage: a?.text ?? null,
+      lastActivityAt: a?.ts ?? channel.createdAt,
+    }
+  })
+}
+
+function matchesQuery(channel: PearChannel, query: string): boolean {
+  if (!query) return true
+  const q = query.toLowerCase()
+  return (
+    channel.name.toLowerCase().includes(q) ||
+    (channel.peerHandle?.toLowerCase().includes(q) ?? false) ||
+    (channel.kind === 'dm' ? 'direct message'.includes(q) : false) ||
+    (channel.isPrivate ? 'private' : 'public').includes(q)
   )
-  return {
-    publicChannels: owned.filter((channel) => !channel.isPrivate),
-    privateChannels: owned.filter((channel) => channel.isPrivate),
-  }
 }
 
 export default function ChannelsScreen() {
@@ -56,6 +84,7 @@ export default function ChannelsScreen() {
     ensureStarted,
     refreshContacts,
     onContactsChanged,
+    onMessage,
   } = usePearChat()
   const [joinVisible, setJoinVisible] = useState(false)
   const [dmVisible, setDmVisible] = useState(false)
@@ -64,11 +93,23 @@ export default function ChannelsScreen() {
   const [dmHandle, setDmHandle] = useState('')
   const [dmNote, setDmNote] = useState('')
   const [busy, setBusy] = useState(false)
+  const [query, setQuery] = useState('')
+  const activityRef = useRef<Map<string, { ts: number; text: string }>>(new Map())
+  const [, forceTick] = useState(0)
 
-  const { publicChannels, privateChannels } = useMemo(
-    () => filterUserChannels(channels, identity?.pubkey),
-    [channels, identity?.pubkey]
+  const ownedChannels = useMemo(
+    () => channels.filter((c) => c.ownerPubkey === identity?.pubkey && c.kind !== 'dm'),
+    [channels, identity?.pubkey],
   )
+
+  // Live last-message / last-activity tracking (Telegram-style recency ordering).
+  useEffect(() => {
+    const unsub = onMessage((msg: PearMessage) => {
+      activityRef.current.set(msg.channelId, { ts: msg.timestamp, text: msg.text })
+      forceTick((n) => n + 1)
+    })
+    return unsub
+  }, [onMessage])
 
   useEffect(() => {
     ensureStarted().catch((bootError) => {
@@ -90,11 +131,20 @@ export default function ChannelsScreen() {
     })
   }, [address, hasHandle, onChainHandle, ready, syncOnChainPresence])
 
+  const rows = useMemo(() => {
+    const unified = [...dms, ...ownedChannels]
+    const withMeta = buildChatRows(unified, activityRef.current)
+    const filtered = withMeta.filter((row) => matchesQuery(row.channel, query))
+    return filtered.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
+  }, [dms, ownedChannels, query, ready, channels])
+
   const handleCreateChannel = async (isPrivate: boolean) => {
     setBusy(true)
     try {
       const label = isPrivate ? 'Private' : 'Public'
-      const count = isPrivate ? privateChannels.length : publicChannels.length
+      const count = isPrivate
+        ? ownedChannels.filter((c) => c.isPrivate).length
+        : ownedChannels.filter((c) => !c.isPrivate).length
       const channel = await createChannel(`${label} ${count + 1}`, isPrivate)
       router.push(`/channel/${channel.id}`)
     } catch (createError) {
@@ -109,7 +159,6 @@ export default function ChannelsScreen() {
       Alert.alert('Topic required', 'Paste the 64-char hex topic key from a tipster.')
       return
     }
-
     setBusy(true)
     try {
       const result = await joinChannel(topicKey.trim(), channelName.trim() || undefined)
@@ -130,12 +179,10 @@ export default function ChannelsScreen() {
       router.push('/profile')
       return
     }
-
     if (!dmHandle.trim()) {
       Alert.alert('Handle required', 'Enter the on-chain @handle you want to message.')
       return
     }
-
     setBusy(true)
     try {
       await sendContactRequest(dmHandle.trim(), dmNote.trim() || undefined)
@@ -164,6 +211,7 @@ export default function ChannelsScreen() {
   if (!ready) {
     return (
       <View style={[styles.centered, { paddingTop: topPadding }]}>
+        <ScreenBackdrop />
         <ActivityIndicator size="large" color={colors.primary} />
         <Text style={styles.loadingText}>Starting Pear P2P worklet…</Text>
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -171,121 +219,166 @@ export default function ChannelsScreen() {
     )
   }
 
+  const hasChannels = rows.length > 0
+  const pending = contacts.pendingIncoming
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <View style={styles.screen}>
       <ScreenBackdrop />
       <BrandHeader
         title="Channels"
-        subtitle="On-chain @handles · encrypted DMs · fan channels"
+        subtitle="Encrypted DMs · fan channels"
+        compact
         right={<IdentityBadge identity={identity} onChainHandle={onChainHandle} />}
       />
 
-      <View style={styles.identityCard}>
-        {isHandleLoading ? (
-          <ActivityIndicator color={colors.primary} size="small" />
-        ) : hasHandle && onChainHandle ? (
-          <>
-            <Text style={styles.identityLabel}>Your on-chain identity</Text>
-            <Text style={styles.identityHandle}>@{onChainHandle}</Text>
-            <Text style={styles.identityHint}>
-              Unique on Polygon — others message this @handle. Stay in the app to receive DMs.
-            </Text>
-          </>
-        ) : (
-          <>
-            <Text style={styles.identityLabel}>No @handle yet</Text>
-            <Text style={styles.identityHint}>
-              Register your tipster name in Profile. On-chain handles are unique and used for chat.
-            </Text>
-            <TouchableOpacity style={styles.linkButton} onPress={() => router.push('/profile')}>
-              <Text style={styles.linkButtonText}>Set up in Profile</Text>
-            </TouchableOpacity>
-          </>
-        )}
+      <View style={styles.searchRow}>
+        <Search size={16} color={colors.textTertiary} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search chats"
+          placeholderTextColor={colors.textTertiary}
+          value={query}
+          onChangeText={setQuery}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {query ? (
+          <TouchableOpacity onPress={() => setQuery('')}>
+            <X size={16} color={colors.textTertiary} />
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <View style={styles.actions}>
         <TouchableOpacity
-          style={[styles.primaryButton, !hasHandle && styles.buttonDisabled]}
+          style={[styles.actionChip, styles.actionPrimary]}
           onPress={() => (hasHandle ? setDmVisible(true) : router.push('/profile'))}
           disabled={busy}
         >
-          <MessageCircle size={18} color={colors.onPrimary} />
-          <Text style={styles.primaryButtonText}>Message @handle</Text>
+          <MessageCircle size={16} color={colors.onPrimary} />
+          <Text style={styles.actionPrimaryText}>Message</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={styles.secondaryButton}
+          style={styles.actionChip}
           onPress={() => handleCreateChannel(false)}
           disabled={busy}
         >
-          <Megaphone size={18} color={colors.primary} />
-          <Text style={styles.secondaryButtonText}>Public</Text>
+          <Megaphone size={16} color={colors.primary} />
+          <Text style={styles.actionText}>Public</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={styles.secondaryButton}
+          style={styles.actionChip}
           onPress={() => handleCreateChannel(true)}
           disabled={busy}
         >
-          <Lock size={18} color={colors.primary} />
-          <Text style={styles.secondaryButtonText}>Private</Text>
+          <Lock size={16} color={colors.primary} />
+          <Text style={styles.actionText}>Private</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.secondaryButton} onPress={() => setJoinVisible(true)}>
-          <Users size={18} color={colors.primary} />
-          <Text style={styles.secondaryButtonText}>Join</Text>
+        <TouchableOpacity style={styles.actionChip} onPress={() => setJoinVisible(true)}>
+          <Users size={16} color={colors.primary} />
+          <Text style={styles.actionText}>Join</Text>
         </TouchableOpacity>
       </View>
 
-      {contacts.pendingIncoming.length > 0 ? (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Contact requests</Text>
-          <View style={styles.list}>
-            {contacts.pendingIncoming.map((request) => (
-              <View key={request.id} style={styles.requestCard}>
-                <Text style={styles.requestTitle}>
-                  {request.fromHandle ? `@${request.fromHandle}` : request.fromPubkey?.slice(0, 12)}
-                </Text>
-                {request.note ? <Text style={styles.requestNote}>{request.note}</Text> : null}
-                <View style={styles.requestActions}>
-                  <TouchableOpacity
-                    style={styles.secondaryButton}
-                    onPress={() => handleRespondRequest(request.id, false)}
-                    disabled={busy}
-                  >
-                    <Text style={styles.secondaryButtonText}>Decline</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.primaryButton}
-                    onPress={() => handleRespondRequest(request.id, true)}
-                    disabled={busy}
-                  >
-                    <Text style={styles.primaryButtonText}>Accept</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))}
-          </View>
-        </View>
+      {!isHandleLoading && !hasHandle ? (
+        <TouchableOpacity style={styles.identityCta} onPress={() => router.push('/profile')}>
+          <Text style={styles.identityCtaText}>Set up your @handle in Profile to message tipsters</Text>
+        </TouchableOpacity>
       ) : null}
 
-      <ChannelSection
-        title="Private DMs"
-        emptyText="No accepted DMs yet. Message a registered @handle and wait for accept."
-        channels={dms}
-        onOpen={(id) => router.push(`/channel/${id}`)}
-      />
+      <FlatList
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
+        ListHeaderComponent={
+          <View>
+            {pending.length > 0 ? (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Requests · {pending.length}</Text>
+                <View style={styles.requestList}>
+                  {pending.map((request) => (
+                    <View key={request.id} style={styles.requestCard}>
+                      <View style={styles.requestHead}>
+                        <Text style={styles.requestTitle}>
+                          {request.fromHandle ? `@${request.fromHandle}` : request.fromPubkey?.slice(0, 12)}
+                        </Text>
+                        {request.note ? <Text style={styles.requestNote}>{request.note}</Text> : null}
+                      </View>
+                      <View style={styles.requestActions}>
+                        <TouchableOpacity
+                          style={styles.declineBtn}
+                          onPress={() => handleRespondRequest(request.id, false)}
+                          disabled={busy}
+                        >
+                          <X size={14} color={colors.textSecondary} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.acceptBtn}
+                          onPress={() => handleRespondRequest(request.id, true)}
+                          disabled={busy}
+                        >
+                          <Check size={14} color={colors.onPrimary} />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            ) : null}
 
-      <ChannelSection
-        title="Public channels"
-        emptyText="No public channel yet. Create one for discovery and announcements."
-        channels={publicChannels}
-        onOpen={(id) => router.push(`/channel/${id}`)}
-      />
-
-      <ChannelSection
-        title="Private channels"
-        emptyText="No private channel yet. Create one for token-gated fan chat."
-        channels={privateChannels}
-        onOpen={(id) => router.push(`/channel/${id}`)}
+            <View style={styles.listHeader}>
+              <Text style={styles.sectionTitle}>
+                {query ? `${rows.length} result${rows.length === 1 ? '' : 's'}` : 'Chats'}
+              </Text>
+              <TouchableOpacity
+                style={styles.newBtn}
+                onPress={() => handleCreateChannel(false)}
+                disabled={busy}
+              >
+                <Plus size={15} color={colors.primary} />
+                <Text style={styles.newBtnText}>New</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        }
+        data={rows}
+        keyExtractor={(row) => row.channel.id}
+        ItemSeparatorComponent={() => <View style={styles.separator} />}
+        ListEmptyComponent={
+          error ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>Couldn't load chats</Text>
+              <Text style={styles.emptyText}>{error}</Text>
+            </View>
+          ) : !hasHandle ? (
+            <View style={styles.emptyCard}>
+              <MessageCircle size={26} color={colors.textTertiary} />
+              <Text style={styles.emptyTitle}>No chats yet</Text>
+              <Text style={styles.emptyText}>
+                Register an @handle in Profile, then message another tipster or create a fan channel.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.emptyCard}>
+              <MessageCircle size={26} color={colors.textTertiary} />
+              <Text style={styles.emptyTitle}>No chats yet</Text>
+              <Text style={styles.emptyText}>
+                {query
+                  ? 'No chats match your search.'
+                  : 'Message a registered @handle or create a channel to get started.'}
+              </Text>
+            </View>
+          )
+        }
+        renderItem={({ item }) => (
+          <ChannelListItem
+            channel={item.channel}
+            lastMessage={item.lastMessage}
+            lastActivityAt={item.lastActivityAt}
+            onPress={() => router.push(`/channel/${item.channel.id}`)}
+          />
+        )}
       />
 
       <Modal visible={joinVisible} transparent animationType="slide">
@@ -308,11 +401,11 @@ export default function ChannelsScreen() {
               onChangeText={setChannelName}
             />
             <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.secondaryButton} onPress={() => setJoinVisible(false)}>
-                <Text style={styles.secondaryButtonText}>Cancel</Text>
+              <TouchableOpacity style={styles.modalCancel} onPress={() => setJoinVisible(false)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.primaryButton} onPress={handleJoin} disabled={busy}>
-                <Text style={styles.primaryButtonText}>Join</Text>
+              <TouchableOpacity style={styles.modalConfirm} onPress={handleJoin} disabled={busy}>
+                <Text style={styles.modalConfirmText}>Join</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -342,57 +435,29 @@ export default function ChannelsScreen() {
               onChangeText={setDmNote}
             />
             <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.secondaryButton} onPress={() => setDmVisible(false)}>
-                <Text style={styles.secondaryButtonText}>Cancel</Text>
+              <TouchableOpacity style={styles.modalCancel} onPress={() => setDmVisible(false)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.primaryButton} onPress={handleSendDmRequest} disabled={busy}>
-                <Text style={styles.primaryButtonText}>Send request</Text>
+              <TouchableOpacity style={styles.modalConfirm} onPress={handleSendDmRequest} disabled={busy}>
+                <Text style={styles.modalConfirmText}>Send request</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
-    </ScrollView>
-  )
-}
-
-function ChannelSection({
-  title,
-  emptyText,
-  channels,
-  onOpen,
-}: {
-  title: string
-  emptyText: string
-  channels: PearChannel[]
-  onOpen: (id: string) => void
-}) {
-  return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {channels.length === 0 ? (
-        <Text style={styles.emptyText}>{emptyText}</Text>
-      ) : (
-        <View style={styles.list}>
-          {channels.map((channel) => (
-            <ChannelListItem
-              key={channel.id}
-              channel={channel}
-              onPress={() => onOpen(channel.id)}
-            />
-          ))}
-        </View>
-      )}
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
-  content: {
+  list: {
+    flex: 1,
+  },
+  listContent: {
     paddingHorizontal: 16,
     paddingBottom: 32,
   },
@@ -404,87 +469,78 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 24,
   },
-  identityCard: {
-    borderRadius: theme.radius.md,
-    borderWidth: 1,
-    borderColor: colors.borderNeon,
-    backgroundColor: colors.cardDark,
-    padding: 14,
-    gap: 6,
-    marginBottom: 16,
+  identityCta: {
+    marginHorizontal: theme.spacing.lg,
+    marginBottom: 10,
   },
-  identityLabel: {
-    color: colors.textTertiary,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  identityHandle: {
-    color: colors.primary,
-    fontSize: 22,
-    fontWeight: '900',
-  },
-  identityHint: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  linkButton: {
-    alignSelf: 'flex-start',
-    marginTop: 4,
-  },
-  linkButtonText: {
+  identityCtaText: {
     color: colors.primary,
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '700',
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.cardDark,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: theme.radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginHorizontal: theme.spacing.lg,
+    marginTop: 8,
+    marginBottom: 10,
+  },
+  searchInput: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 14,
+    padding: 0,
   },
   actions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 20,
+    gap: 8,
+    marginHorizontal: theme.spacing.lg,
+    marginBottom: 10,
   },
-  primaryButton: {
-    backgroundColor: colors.primary,
-    borderRadius: theme.radius.sharp,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+  actionChip: {
+    borderRadius: theme.radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.cardDark,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
-  primaryButtonText: {
+  actionPrimary: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  actionText: {
+    color: colors.primary,
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  actionPrimaryText: {
     color: colors.onPrimary,
     fontWeight: '800',
-    fontSize: 13,
-  },
-  secondaryButton: {
-    borderColor: colors.borderNeon,
-    borderWidth: 1,
-    borderRadius: theme.radius.sharp,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.cardDark,
-  },
-  secondaryButtonText: {
-    color: colors.primary,
-    fontWeight: '600',
-  },
-  buttonDisabled: {
-    opacity: 0.7,
+    fontSize: 12,
   },
   section: {
-    marginBottom: 24,
-    gap: 10,
+    marginBottom: 16,
+    gap: 8,
   },
   sectionTitle: {
     ...theme.typography.caption,
     color: colors.gold,
     fontSize: 11,
+  },
+  requestList: {
+    gap: 8,
   },
   requestCard: {
     borderRadius: theme.radius.md,
@@ -492,35 +548,94 @@ const styles = StyleSheet.create({
     borderColor: colors.borderNeon,
     backgroundColor: colors.card,
     padding: 12,
-    gap: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  requestHead: {
+    flex: 1,
+    gap: 2,
   },
   requestTitle: {
     color: colors.text,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '800',
   },
   requestNote: {
     color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 12,
   },
   requestActions: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
     gap: 8,
   },
-  modalHint: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
+  declineBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.cardDark,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  list: {
+  acceptBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  listHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+    marginTop: 4,
+  },
+  newBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: theme.radius.pill,
+    borderWidth: 1,
+    borderColor: colors.borderNeon,
+    backgroundColor: colors.neonMuted,
+  },
+  newBtnText: {
+    color: colors.primary,
+    fontWeight: '800',
+    fontSize: 11,
+  },
+  separator: {
+    height: 1,
+    backgroundColor: colors.borderDark,
+    marginHorizontal: 12,
+  },
+  emptyCard: {
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    padding: 22,
     gap: 10,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  emptyTitle: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '800',
   },
   emptyText: {
     color: colors.textSecondary,
-    lineHeight: 22,
-    paddingVertical: 8,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'center',
   },
   loadingText: {
     color: colors.textSecondary,
@@ -544,7 +659,12 @@ const styles = StyleSheet.create({
   modalTitle: {
     color: colors.text,
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '800',
+  },
+  modalHint: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
   },
   input: {
     backgroundColor: colors.background,
@@ -554,12 +674,32 @@ const styles = StyleSheet.create({
     color: colors.text,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    fontFamily: 'monospace',
   },
   modalActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: 10,
-    marginTop: 8,
+    marginTop: 4,
+  },
+  modalCancel: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  modalCancelText: {
+    color: colors.textSecondary,
+    fontWeight: '700',
+  },
+  modalConfirm: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: theme.radius.md,
+    backgroundColor: colors.primary,
+  },
+  modalConfirmText: {
+    color: colors.onPrimary,
+    fontWeight: '800',
   },
 })

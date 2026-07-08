@@ -1,18 +1,62 @@
 import { colors } from '@/constants/colors'
+import { useMemo } from 'react'
 import { StyleSheet, View } from 'react-native'
 
 /**
  * Ambient background — pure RN views (no native gradient module).
- * Avoids crashes when the dev client was not rebuilt after adding expo-linear-gradient.
+ * A smooth top→bottom gradient in the app palette: a deep pitch-green tinted
+ * charcoal at the very top fading into pure black at the bottom.
  */
+
+type RGB = [number, number, number]
+
+function hexToRgb(hex: string): RGB {
+  const h = hex.replace('#', '')
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16),
+  ]
+}
+
+function rgbToHex([r, g, b]: RGB): string {
+  const c = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0')
+  return `#${c(r)}${c(g)}${c(b)}`
+}
+
+function mix(a: RGB, b: RGB, t: number): RGB {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+}
+
+// Top → bottom stops, all from the ThetaBet palette (pitch green → black).
+const STOPS: RGB[] = [hexToRgb('#0C1A12'), hexToRgb('#06100A'), hexToRgb(colors.black)]
+
+const BANDS = 48
+
+/** Smoothstep easing removes hard band edges for a smoother fade. */
+function smoothstep(t: number): number {
+  return t * t * (3 - 2 * t)
+}
+
+function buildGradient(stops: RGB[], bands: number): string[] {
+  const out: string[] = []
+  for (let i = 0; i < bands; i++) {
+    const t = smoothstep(i / (bands - 1))
+    const seg = t * (stops.length - 1)
+    const idx = Math.min(Math.floor(seg), stops.length - 2)
+    out.push(rgbToHex(mix(stops[idx], stops[idx + 1], seg - idx)))
+  }
+  return out
+}
+
 export function ScreenBackdrop() {
+  const gradient = useMemo(() => buildGradient(STOPS, BANDS), [])
+
   return (
     <View style={styles.root} pointerEvents="none">
-      <View style={styles.bandTop} />
-      <View style={styles.bandMid} />
-      <View style={styles.bandBottom} />
-      <View style={styles.neonOrb} />
-      <View style={styles.goldOrb} />
+      {gradient.map((color, i) => (
+        <View key={i} style={[styles.band, { backgroundColor: color }]} />
+      ))}
     </View>
   )
 }
@@ -21,42 +65,10 @@ const styles = StyleSheet.create({
   root: {
     ...StyleSheet.absoluteFillObject,
     overflow: 'hidden',
-    backgroundColor: colors.background,
+    backgroundColor: colors.black,
+    flexDirection: 'column',
   },
-  bandTop: {
-    ...StyleSheet.absoluteFillObject,
-    bottom: '55%',
-    backgroundColor: '#0c1828',
-  },
-  bandMid: {
-    ...StyleSheet.absoluteFillObject,
-    top: '25%',
-    bottom: '25%',
-    backgroundColor: colors.background,
-    opacity: 0.92,
-  },
-  bandBottom: {
-    ...StyleSheet.absoluteFillObject,
-    top: '60%',
-    backgroundColor: '#061018',
-    opacity: 0.85,
-  },
-  neonOrb: {
-    position: 'absolute',
-    top: -72,
-    right: -48,
-    width: 240,
-    height: 240,
-    borderRadius: 120,
-    backgroundColor: 'rgba(124, 255, 79, 0.09)',
-  },
-  goldOrb: {
-    position: 'absolute',
-    bottom: 100,
-    left: -64,
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: 'rgba(232, 197, 71, 0.06)',
+  band: {
+    flex: 1,
   },
 })

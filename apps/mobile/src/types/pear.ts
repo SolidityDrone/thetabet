@@ -13,6 +13,7 @@ export interface PearChannel {
   kind?: PearChannelKind
   name: string
   topicKey: string
+  coreKey?: string
   ownerPubkey: string
   peerPubkey?: string | null
   peerHandle?: string | null

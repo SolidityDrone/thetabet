@@ -21,10 +21,11 @@ import {
   type VaultBetPlacementStage,
 } from '@/services/azuro/vault-bet-placement'
 import { saveLocalBet } from '@/services/azuro/bet-history'
+import { MatchAiSheet } from '@/components/ai/match-ai-sheet'
 import getErrorMessage from '@/utils/get-error-message'
 import type { AzuroBetMode, AzuroBetSelection } from '@/types/azuro'
 import type { ConditionDetailedData } from '@azuro-org/toolkit'
-import { ChevronLeft } from 'lucide-react-native'
+import { ChevronLeft, Sparkles } from 'lucide-react-native'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
@@ -87,6 +88,7 @@ export default function BetEventScreen() {
   const [stake, setStake] = useState('1')
   const [isPlacing, setIsPlacing] = useState(false)
   const [quoteText, setQuoteText] = useState<string | null>(null)
+  const [aiVisible, setAiVisible] = useState(false)
 
   const vaultTotalUsdt = useMemo(() => {
     if (!tipsterVault?.totalAssets) return 0
@@ -459,6 +461,32 @@ export default function BetEventScreen() {
               />
             </View>
           ) : null}
+
+          <TouchableOpacity
+            style={[styles.aiFab, { bottom: cartHeight ? cartHeight + 18 : 18 }]}
+            onPress={() => setAiVisible(true)}
+            activeOpacity={0.85}
+          >
+            <Sparkles size={18} color={colors.onPrimary} />
+          </TouchableOpacity>
+
+          <MatchAiSheet
+            visible={aiVisible}
+            onClose={() => setAiVisible(false)}
+            matchTitle={game?.title ?? 'Match'}
+            startsAt={game?.startsAt ?? null}
+            league={game?.league?.name ?? null}
+            markets={markets.map((condition) => ({
+              conditionTitle: condition.title,
+              outcomes: condition.outcomes
+                .filter((o) => o.state === 'Active')
+                .map((o) => ({
+                  title: o.title,
+                  decimalOdds: formatAzuroOdds(o.odds),
+                })),
+            }))}
+            selected={selected}
+          />
         </>
       )}
     </View>
@@ -561,6 +589,18 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+  },
+  aiFab: {
+    position: 'absolute',
+    right: 18,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.primaryDim,
   },
   previewCard: {
     borderRadius: 12,

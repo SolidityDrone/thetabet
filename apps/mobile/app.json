@@ -43,6 +43,7 @@
     "plugins": [
       "expo-router",
       "expo-dev-client",
+      "@qvac/sdk/expo-plugin",
       [
         "expo-splash-screen",
         {
@@ -65,12 +66,14 @@
             "minSdkVersion": 29,
             "compileSdkVersion": 36,
             "buildToolsVersion": "36.0.0",
+            "ndkVersion": "27.1.12297006",
             "usesCleartextTraffic": true
           }
         }
       ],
       "./plugins/withAndroidSubprojects.js",
-      "./plugins/withAndroidCleartextLocalhost.js"
+      "./plugins/withAndroidCleartextLocalhost.js",
+      "./plugins/withAndroidNdk27.js"
     ],
     "experiments": {
       "typedRoutes": true,

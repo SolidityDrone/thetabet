@@ -128,6 +128,7 @@ export class PearChat {
       kind: channel.kind || 'channel',
       name: channel.name,
       topicKey: channel.topicKey,
+      coreKey: channel.coreKey,
       ownerPubkey: channel.ownerPubkey,
       peerPubkey: channel.peerPubkey || null,
       peerHandle: channel.peerHandle || null,
@@ -322,6 +323,7 @@ export class PearChat {
 
     const core = this.store.get({ name: 'channel-' + channel.id })
     await core.ready()
+    channel.coreKey = b4a.toString(core.key, 'hex')
 
     const discovery = this.swarm.join(b4a.from(channel.topicKey, 'hex'), {
       server: announce && !channel.isPrivate,

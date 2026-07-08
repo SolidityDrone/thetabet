@@ -1,8 +1,8 @@
 import { useWallet } from '@tetherto/wdk-react-native-provider';
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation';
-import { Fingerprint, Shield } from 'lucide-react-native';
+import { Fingerprint } from 'lucide-react-native';
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '@/constants/colors';
 import getErrorMessage from '@/utils/get-error-message';
@@ -46,7 +46,11 @@ export default function AuthorizeScreen() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.content}>
         <View style={styles.iconContainer}>
-          <Shield size={80} color={colors.primary} />
+          <Image
+            source={require('../../assets/images/splash-logo.png')}
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
         </View>
 
         <Text style={styles.title}>Authorize Access</Text>
@@ -64,7 +68,7 @@ export default function AuthorizeScreen() {
               onPress={handleBiometricAuth}
               disabled={isLoading}
             >
-              <Fingerprint size={24} color={colors.white} />
+              <Fingerprint size={24} color="#000000" />
               <Text style={styles.primaryButtonText}>Use Biometric</Text>
             </TouchableOpacity>
           </>
@@ -97,6 +101,11 @@ const styles = StyleSheet.create({
   },
   iconContainer: {
     marginBottom: 40,
+    alignItems: 'center',
+  },
+  logoImage: {
+    width: 320,
+    height: 320,
   },
   title: {
     fontSize: 28,
@@ -131,7 +140,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   primaryButtonText: {
-    color: colors.text,
+    color: '#000000',
     fontSize: 16,
     fontWeight: '600',
     marginLeft: 12,

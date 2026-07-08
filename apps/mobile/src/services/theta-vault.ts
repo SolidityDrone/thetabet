@@ -10,8 +10,7 @@ import {
   thetaSingletonAbi,
   tipsterVaultAbi,
 } from '@/config/theta'
-import { getWdkManager } from '@/services/wdk-bare-api'
-import { WDK_NETWORK_KEY } from '@/config/chains'
+import { getPolygonWalletAddress } from '@/services/wdk-address'
 import {
   BaseError,
   ContractFunctionRevertedError,
@@ -47,11 +46,11 @@ function decodeRevert(error: unknown): string | null {
   return null
 }
 
-async function resolveSigningAddress(accountIndex = 0): Promise<Address> {
-  const { address } = await getWdkManager().getAddress({
-    network: WDK_NETWORK_KEY,
-    accountIndex,
-  })
+async function resolveSigningAddress(): Promise<Address> {
+  const address = await getPolygonWalletAddress()
+  if (!address) {
+    throw new Error('Wallet address is not ready. Unlock your wallet and try again.')
+  }
   return address as Address
 }
 

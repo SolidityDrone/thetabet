@@ -1,5 +1,8 @@
 import Header from '@/components/header';
+import { WalletSecretExportRow } from '@/components/wallet/wallet-secret-export';
 import { clearAvatar } from '@/config/avatar-options';
+import { useConfirmSheet } from '@/context/confirm-sheet';
+import { resetWalletAddressCache } from '@/services/patch-wdk-service'
 import { useThetaWalletAddress } from '@/hooks/use-theta-wallet-address'
 import useWalletAvatar from '@/hooks/use-wallet-avatar';
 import { useWallet } from '@tetherto/wdk-react-native-provider';
@@ -7,7 +10,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation';
 import { Copy, Info, Shield, Trash2, Wallet } from 'lucide-react-native';
 import React from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { toast } from 'sonner-native';
 import { colors } from '@/constants/colors';
@@ -15,36 +18,32 @@ import { colors } from '@/constants/colors';
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const router = useDebouncedNavigation();
+  const { confirm } = useConfirmSheet();
   const { wallet, clearWallet } = useWallet();
   const { address: polygonAddress, shortAddress: polygonShortAddress } = useThetaWalletAddress();
   const avatar = useWalletAvatar();
 
-  const handleDeleteWallet = () => {
-    Alert.alert(
-      'Delete Wallet',
-      'This will permanently delete your wallet and all associated data. Make sure you have backed up your recovery phrase. This action cannot be undone.',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Delete Wallet',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await clearWallet();
-              await clearAvatar();
-              toast.success('Wallet deleted successfully');
-              router.dismissAll('/');
-            } catch (error) {
-              console.error('Failed to delete wallet:', error);
-              toast.error('Failed to delete wallet');
-            }
-          },
-        },
-      ]
-    );
+  const handleDeleteWallet = async () => {
+    const confirmed = await confirm({
+      title: 'Delete wallet',
+      message:
+        'This permanently removes your wallet from this device. Make sure you have backed up your recovery phrase first.',
+      confirmLabel: 'Delete wallet',
+      destructive: true,
+    });
+
+    if (!confirmed) return;
+
+    try {
+      await clearWallet();
+      await resetWalletAddressCache();
+      await clearAvatar();
+      toast.success('Wallet deleted successfully');
+      router.dismissAll('/');
+    } catch (error) {
+      console.error('Failed to delete wallet:', error);
+      toast.error('Failed to delete wallet');
+    }
   };
 
   const handleCopyAddress = async (address: string, networkName: string) => {
@@ -79,10 +78,12 @@ export default function SettingsScreen() {
               <Text style={styles.infoValue}>{avatar}</Text>
             </View>
 
-            <View style={[styles.infoRow, styles.infoRowLast]}>
+            <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Network</Text>
               <Text style={styles.infoValue}>Polygon</Text>
             </View>
+
+            <WalletSecretExportRow />
           </View>
         </View>
 

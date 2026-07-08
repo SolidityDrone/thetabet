@@ -19,6 +19,7 @@ contract DeployAmoy is Script {
             AmoyConfig.BET_TOKEN,
             AmoyConfig.AZURO_LP,
             AmoyConfig.CLIENT_CORE,
+            AmoyConfig.RELAYER,
             PolygonConfig.INITIAL_WHITELISTED_USER
         );
 

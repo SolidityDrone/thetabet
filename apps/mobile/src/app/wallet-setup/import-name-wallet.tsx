@@ -1,4 +1,4 @@
-import { clearEmptyWalletAddressCache } from '@/services/patch-wdk-service'
+import { clearEmptyWalletAddressCache, resetWalletAddressCache } from '@/services/patch-wdk-service'
 import avatarOptions, { setAvatar } from '@/config/avatar-options';
 import { useAppMode } from '@/context/app-mode'
 import { CommonActions, useNavigation } from '@react-navigation/native';
@@ -47,6 +47,7 @@ export default function ImportNameWalletScreen() {
 
     try {
       await clearEmptyWalletAddressCache();
+      await resetWalletAddressCache();
       // Use the context's createWallet method which handles everything including unlocking
       await createWallet({ name: walletName, mnemonic: seedPhrase });
       await useRealWallet();

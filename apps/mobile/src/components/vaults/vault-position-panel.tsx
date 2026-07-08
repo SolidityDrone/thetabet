@@ -1,6 +1,7 @@
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { BET_TOKEN_DECIMALS, formatBetToken } from '@/config/theta'
+import { useConfirmSheet } from '@/context/confirm-sheet'
 import { useWalletPortfolio } from '@/hooks/use-wallet-portfolio'
 import {
   depositIntoVault,
@@ -17,7 +18,6 @@ import { X } from 'lucide-react-native'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
-  Alert,
   StyleSheet,
   Text,
   TextInput,
@@ -62,6 +62,7 @@ export function VaultPositionPanel({
   expanded,
   onExpandedChange,
 }: Props) {
+  const { confirm, alert } = useConfirmSheet()
   const { assets, refresh: refreshBalances } = useWalletPortfolio()
   const [mode, setMode] = useState<PositionMode>('add')
   const [amount, setAmount] = useState('25')
@@ -172,66 +173,62 @@ export function VaultPositionPanel({
 
   const handleDeposit = useCallback(async () => {
     if (blockedReason || !investorAddress) {
-      Alert.alert('Cannot add', blockedReason ?? 'Wallet not ready.')
+      await alert({ title: 'Cannot add', message: blockedReason ?? 'Wallet not ready.' })
       return
     }
 
     const sharesLabel = previewShares ? formatBetToken(previewShares, 4) : '—'
 
-    Alert.alert(
-      'Confirm deposit',
-      [
+    const confirmed = await confirm({
+      title: 'Confirm deposit',
+      message: [
         `Vault: ${vault.name}`,
         `Add: ${amount} USDT`,
         `You receive: ~${sharesLabel} ${vault.symbol} shares`,
       ].join('\n'),
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Approve & deposit',
-          onPress: () => {
-            void (async () => {
-              setIsSubmitting(true)
-              const stageMessages: Record<VaultDepositStage, string> = {
-                approving: 'Approving USDT…',
-                'waiting-approval': 'Waiting for approval…',
-                depositing: 'Depositing…',
-                confirming: 'Confirming…',
-              }
-              let progressToast = toast.loading(stageMessages.approving)
+      confirmLabel: 'Approve & deposit',
+    })
 
-              try {
-                await depositIntoVault({
-                  from: investorAddress as Address,
-                  vaultAddress: vault.address as Address,
-                  amount,
-                  onStage: (stage) => {
-                    toast.dismiss(progressToast)
-                    progressToast = toast.loading(stageMessages[stage])
-                  },
-                })
-                toast.dismiss(progressToast)
-                toast.success('Deposit confirmed', {
-                  description: `+${amount} USDT in ${vault.name}`,
-                })
-                void refreshBalances()
-                onComplete?.()
-                onExpandedChange(false)
-              } catch (depositError) {
-                toast.dismiss(progressToast)
-                const message = getErrorMessage(depositError, 'Deposit failed')
-                toast.error('Deposit failed', { description: message })
-              } finally {
-                setIsSubmitting(false)
-              }
-            })()
-          },
+    if (!confirmed) return
+
+    setIsSubmitting(true)
+    const stageMessages: Record<VaultDepositStage, string> = {
+      approving: 'Approving USDT…',
+      'waiting-approval': 'Waiting for approval…',
+      depositing: 'Depositing…',
+      confirming: 'Confirming…',
+    }
+    let progressToast = toast.loading(stageMessages.approving)
+
+    try {
+      await depositIntoVault({
+        from: investorAddress as Address,
+        vaultAddress: vault.address as Address,
+        amount,
+        onStage: (stage) => {
+          toast.dismiss(progressToast)
+          progressToast = toast.loading(stageMessages[stage])
         },
-      ]
-    )
+      })
+      toast.dismiss(progressToast)
+      toast.success('Deposit confirmed', {
+        description: `+${amount} USDT in ${vault.name}`,
+      })
+      void refreshBalances()
+      onComplete?.()
+      onExpandedChange(false)
+    } catch (depositError) {
+      toast.dismiss(progressToast)
+      const message = getErrorMessage(depositError, 'Deposit failed')
+      toast.error('Deposit failed', { description: message })
+    } finally {
+      setIsSubmitting(false)
+    }
   }, [
+    alert,
     amount,
     blockedReason,
+    confirm,
     investorAddress,
     onComplete,
     onExpandedChange,
@@ -244,64 +241,60 @@ export function VaultPositionPanel({
 
   const handleWithdraw = useCallback(async () => {
     if (blockedReason || !investorAddress) {
-      Alert.alert('Cannot withdraw', blockedReason ?? 'Wallet not ready.')
+      await alert({ title: 'Cannot withdraw', message: blockedReason ?? 'Wallet not ready.' })
       return
     }
 
     const sharesLabel = previewShares ? formatBetToken(previewShares, 4) : '—'
 
-    Alert.alert(
-      'Confirm withdrawal',
-      [
+    const confirmed = await confirm({
+      title: 'Confirm withdrawal',
+      message: [
         `Vault: ${vault.name}`,
         `Withdraw: ${amount} USDT`,
         `Redeem: ~${sharesLabel} ${vault.symbol} shares`,
       ].join('\n'),
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Withdraw',
-          onPress: () => {
-            void (async () => {
-              setIsSubmitting(true)
-              const stageMessages: Record<VaultWithdrawStage, string> = {
-                withdrawing: 'Withdrawing…',
-                confirming: 'Confirming…',
-              }
-              let progressToast = toast.loading(stageMessages.withdrawing)
+      confirmLabel: 'Withdraw',
+    })
 
-              try {
-                await withdrawFromVault({
-                  from: investorAddress as Address,
-                  vaultAddress: vault.address as Address,
-                  amount,
-                  onStage: (stage) => {
-                    toast.dismiss(progressToast)
-                    progressToast = toast.loading(stageMessages[stage])
-                  },
-                })
-                toast.dismiss(progressToast)
-                toast.success('Withdrawal confirmed', {
-                  description: `${amount} USDT from ${vault.name}`,
-                })
-                void refreshBalances()
-                onComplete?.()
-                onExpandedChange(false)
-              } catch (withdrawError) {
-                toast.dismiss(progressToast)
-                const message = getErrorMessage(withdrawError, 'Withdrawal failed')
-                toast.error('Withdrawal failed', { description: message })
-              } finally {
-                setIsSubmitting(false)
-              }
-            })()
-          },
+    if (!confirmed) return
+
+    setIsSubmitting(true)
+    const stageMessages: Record<VaultWithdrawStage, string> = {
+      withdrawing: 'Withdrawing…',
+      confirming: 'Confirming…',
+    }
+    let progressToast = toast.loading(stageMessages.withdrawing)
+
+    try {
+      await withdrawFromVault({
+        from: investorAddress as Address,
+        vaultAddress: vault.address as Address,
+        amount,
+        onStage: (stage) => {
+          toast.dismiss(progressToast)
+          progressToast = toast.loading(stageMessages[stage])
         },
-      ]
-    )
+      })
+      toast.dismiss(progressToast)
+      toast.success('Withdrawal confirmed', {
+        description: `${amount} USDT from ${vault.name}`,
+      })
+      void refreshBalances()
+      onComplete?.()
+      onExpandedChange(false)
+    } catch (withdrawError) {
+      toast.dismiss(progressToast)
+      const message = getErrorMessage(withdrawError, 'Withdrawal failed')
+      toast.error('Withdrawal failed', { description: message })
+    } finally {
+      setIsSubmitting(false)
+    }
   }, [
+    alert,
     amount,
     blockedReason,
+    confirm,
     investorAddress,
     onComplete,
     onExpandedChange,

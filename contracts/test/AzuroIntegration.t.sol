@@ -18,7 +18,11 @@ contract AzuroIntegrationTest is Test {
         vm.createSelectFork(rpc);
 
         singleton = new ThetaSingleton(
-            PolygonConfig.BET_TOKEN, PolygonConfig.AZURO_LP, PolygonConfig.CLIENT_CORE, address(0)
+            PolygonConfig.BET_TOKEN,
+            PolygonConfig.AZURO_LP,
+            PolygonConfig.CLIENT_CORE,
+            PolygonConfig.RELAYER,
+            address(0)
         );
         lp = IAzuroLP(PolygonConfig.AZURO_LP);
     }

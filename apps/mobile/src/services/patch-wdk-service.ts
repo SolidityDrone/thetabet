@@ -3,6 +3,7 @@ import { AssetTicker, NetworkType, wdkService } from '@tetherto/wdk-react-native
 import AsyncStorage from '@react-native-async-storage/async-storage'
 
 const STORAGE_KEY_ADDRESSES = 'wdk_wallet_addresses'
+const STORAGE_KEY_WALLET = 'wdk_wallet_data'
 
 type WdkServiceInstance = typeof wdkService & {
   __thetaPatched?: boolean
@@ -32,6 +33,16 @@ export async function clearEmptyWalletAddressCache(): Promise<boolean> {
   }
 }
 
+/** Clear cached network addresses so the next unlock re-resolves from the worklet. */
+export async function resetWalletAddressCache(): Promise<void> {
+  await AsyncStorage.removeItem(STORAGE_KEY_ADDRESSES)
+}
+
+function isBiometricCancelError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('Cancel') || message.includes('code: 13')
+}
+
 /** Polygon mainnet address + skip cloud indexer when no API key. */
 export function patchWdkService(): void {
   const service = wdkService as WdkServiceInstance
@@ -43,6 +54,21 @@ export function patchWdkService(): void {
   const originalResolveTransactions = service.resolveWalletTransactions.bind(service)
 
   service.createWallet = async function createWalletPatched(params) {
+    const storedWallet = await AsyncStorage.getItem(STORAGE_KEY_WALLET)
+    if (storedWallet) {
+      try {
+        const seed = await this.retrieveSeed(params.prf)
+        if (!seed) {
+          throw new Error('Could not decrypt your wallet. Try biometric unlock again.')
+        }
+      } catch (error) {
+        if (isBiometricCancelError(error)) {
+          throw new Error('Biometric authentication was cancelled. Try again.')
+        }
+        throw error
+      }
+    }
+
     const wallet = await originalCreateWallet(params)
     return { ...wallet, enabledAssets: [AssetTicker.USDT] }
   }

@@ -18,7 +18,8 @@
     "contracts:deploy-amoy": "bash contracts/script/deploy-polygon.sh",
     "contracts:sync": "node tools/scripts/sync-deployment.mjs polygon",
     "dev:stack": "bash tools/dev-stack.sh",
-    "dev:stack:tunnel": "USE_TUNNEL=1 bash tools/dev-stack.sh"
+    "dev:stack:tunnel": "USE_TUNNEL=1 bash tools/dev-stack.sh",
+    "dev:stack:reset": "PONDER_RESET_DB=1 USE_TUNNEL=1 bash tools/dev-stack.sh"
   },
   "engines": {
     "node": ">=20"

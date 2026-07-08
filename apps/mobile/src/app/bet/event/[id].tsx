@@ -6,6 +6,8 @@ import { ScreenBackdrop } from '@/components/ui/screen-backdrop'
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { azuroBetToken, formatAzuroOdds } from '@/config/azuro'
+import { BET_TOKEN_DECIMALS, formatBetToken } from '@/config/theta'
+import { useConfirmSheet } from '@/context/confirm-sheet'
 import { useAppMode } from '@/context/app-mode'
 import { useAzuroEvent } from '@/hooks/use-azuro-event'
 import { useLiveMatchStats } from '@/hooks/use-live-match-stats'
@@ -14,6 +16,10 @@ import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation'
 import { useScreenTopPadding } from '@/hooks/use-screen-top-padding'
 import { useWalletPortfolio } from '@/hooks/use-wallet-portfolio'
 import { quoteAzuroBet, placeAzuroBet, type BetPlacementStage } from '@/services/azuro/bet-placement'
+import {
+  placeVaultAzuroBet,
+  type VaultBetPlacementStage,
+} from '@/services/azuro/vault-bet-placement'
 import { saveLocalBet } from '@/services/azuro/bet-history'
 import getErrorMessage from '@/utils/get-error-message'
 import type { AzuroBetMode, AzuroBetSelection } from '@/types/azuro'
@@ -22,7 +28,6 @@ import { ChevronLeft } from 'lucide-react-native'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
-  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -33,6 +38,7 @@ import {
 import { useLocalSearchParams } from 'expo-router'
 import { toast } from 'sonner-native'
 import type { Address } from 'viem'
+import { formatUnits } from 'viem'
 
 function pickPrimaryMarkets(conditions: ConditionDetailedData[]) {
   const preferred = [
@@ -63,6 +69,7 @@ function pickPrimaryMarkets(conditions: ConditionDetailedData[]) {
 export default function BetEventScreen() {
   const topPadding = useScreenTopPadding()
   const router = useDebouncedNavigation()
+  const { alert } = useConfirmSheet()
   const { id } = useLocalSearchParams<{ id: string }>()
   const { hasSkippedWallet } = useAppMode()
   const { address } = useWalletPortfolio()
@@ -81,6 +88,33 @@ export default function BetEventScreen() {
   const [isPlacing, setIsPlacing] = useState(false)
   const [quoteText, setQuoteText] = useState<string | null>(null)
 
+  const vaultTotalUsdt = useMemo(() => {
+    if (!tipsterVault?.totalAssets) return 0
+    try {
+      return Number(formatUnits(BigInt(tipsterVault.totalAssets), BET_TOKEN_DECIMALS))
+    } catch {
+      return 0
+    }
+  }, [tipsterVault?.totalAssets])
+
+  const vaultFreeUsdt = useMemo(() => {
+    if (!tipsterVault?.freeBalance) return 0
+    try {
+      return Number(formatUnits(BigInt(tipsterVault.freeBalance), BET_TOKEN_DECIMALS))
+    } catch {
+      return 0
+    }
+  }, [tipsterVault?.freeBalance])
+
+  const effectiveStakeUsdt = useMemo(() => {
+    const stakeNum = Number(stake)
+    if (!Number.isFinite(stakeNum) || stakeNum <= 0) return 0
+    if (betMode === 'tipster') {
+      return (stakeNum / 100) * vaultTotalUsdt
+    }
+    return stakeNum
+  }, [betMode, stake, vaultTotalUsdt])
+
   const markets = useMemo(() => pickPrimaryMarkets(conditions), [conditions])
   const canBetAsTipster = Boolean(tipsterVault)
   const tipsterLabel = tipsterVault
@@ -88,10 +122,9 @@ export default function BetEventScreen() {
     : undefined
 
   const potentialPayout = useMemo(() => {
-    const stakeNum = Number(stake)
-    if (!selected || !Number.isFinite(stakeNum) || stakeNum <= 0) return 0
-    return stakeNum * selected.decimalOdds
-  }, [selected, stake])
+    if (!selected || effectiveStakeUsdt <= 0) return 0
+    return effectiveStakeUsdt * selected.decimalOdds
+  }, [effectiveStakeUsdt, selected])
 
   const placementBlockedReason = useMemo(() => {
     if (isOnChain === false) {
@@ -113,7 +146,12 @@ export default function BetEventScreen() {
       return
     }
     const stakeNum = Number(stake)
-    if (!Number.isFinite(stakeNum) || stakeNum <= 0) {
+    if (betMode === 'tipster') {
+      if (!Number.isFinite(stakeNum) || stakeNum <= 0 || stakeNum > 100) {
+        setQuoteText(null)
+        return
+      }
+    } else if (!Number.isFinite(stakeNum) || stakeNum <= 0) {
       setQuoteText(null)
       return
     }
@@ -122,7 +160,7 @@ export default function BetEventScreen() {
         bettor: address as Address,
         conditionId: selected.conditionId,
         outcomeId: selected.outcomeId,
-        amount: stake,
+        amount: String(effectiveStakeUsdt),
       })
       setQuoteText(
         `Min ${quote.limits.minBet ?? 0} · Max ${quote.limits.maxBet} ${azuroBetToken.symbol}`
@@ -130,7 +168,7 @@ export default function BetEventScreen() {
     } catch {
       setQuoteText(null)
     }
-  }, [address, hasSkippedWallet, selected, stake])
+  }, [address, betMode, effectiveStakeUsdt, hasSkippedWallet, selected, stake])
 
   useEffect(() => {
     if (!selected) return
@@ -150,6 +188,11 @@ export default function BetEventScreen() {
     }
   }, [betMode, canBetAsTipster])
 
+  const handleModeChange = useCallback((mode: AzuroBetMode) => {
+    setBetMode(mode)
+    setStake(mode === 'tipster' ? '5' : '1')
+  }, [])
+
   const handleSelectOutcome = (
     condition: ConditionDetailedData,
     outcome: ConditionDetailedData['outcomes'][number]
@@ -167,33 +210,87 @@ export default function BetEventScreen() {
     })
   }
 
-  const stageMessages: Record<BetPlacementStage, string> = {
+  const stageMessages: Record<BetPlacementStage | VaultBetPlacementStage, string> = {
     quoting: 'Checking live odds and stake limits…',
     approving: 'Approving USDT for Azuro relayer…',
     'waiting-approval': 'Waiting for USDT approval on Polygon…',
     signing: 'Sign the bet in your wallet…',
-    submitting: 'Submitting bet to Azuro…',
+    submitting: 'Submitting bet on Polygon…',
     confirming: 'Waiting for relayer confirmation…',
+    'preparing-vault': 'Reserving vault liquidity on ThetaSingleton…',
+    'confirming-vault': 'Waiting for vault prepare confirmation…',
+    'completing-vault': 'Recording vault bet on-chain…',
+    'canceling-vault': 'Restoring vault liquidity after failed bet…',
   }
 
   const handlePlaceBet = async () => {
     if (!selected) return
 
     if (!address) {
-      Alert.alert('Wallet required', 'Connect or unlock your wallet to place a bet.')
+      await alert({
+        title: 'Wallet required',
+        message: 'Connect or unlock your wallet to place a bet.',
+      })
       return
     }
 
     if (hasSkippedWallet) {
-      Alert.alert(
-        'Real wallet required',
-        'The dev skip wallet cannot sign Azuro bets. Set up a WDK wallet with USDT on Polygon.'
-      )
+      await alert({
+        title: 'Real wallet required',
+        message:
+          'The dev skip wallet cannot sign Azuro bets. Set up a WDK wallet with USDT on Polygon.',
+      })
       return
     }
 
     if (betMode === 'tipster') {
-      Alert.alert('Coming soon', 'Vault bets are not wired yet.')
+      if (!tipsterVault) {
+        await alert({
+          title: 'Vault required',
+          message: 'Set up your tipster vault in Profile before betting as a tipster.',
+        })
+        return
+      }
+
+      if (effectiveStakeUsdt <= 0) {
+        await alert({
+          title: 'Invalid vault stake',
+          message: 'Enter a valid vault stake percentage.',
+        })
+        return
+      }
+
+      setIsPlacing(true)
+      let progressToast = toast.loading(stageMessages.quoting)
+      const onStage = (stage: BetPlacementStage | VaultBetPlacementStage) => {
+        toast.dismiss(progressToast)
+        progressToast = toast.loading(stageMessages[stage])
+      }
+
+      try {
+        const result = await placeVaultAzuroBet({
+          tipster: address as Address,
+          selection: selected,
+          amountUsdt: effectiveStakeUsdt.toFixed(6).replace(/\.?0+$/, ''),
+          onStage,
+        })
+        toast.dismiss(progressToast)
+        toast.success('Vault bet placed', {
+          description: `${formatBetToken(result.amount)} USDT · ${result.hash.slice(0, 10)}…`,
+        })
+        setSelected(null)
+        router.push(`/vault/${tipsterVault.id}`)
+      } catch (placeError) {
+        toast.dismiss(progressToast)
+        const message = getErrorMessage(placeError, 'Could not place vault bet')
+        if (__DEV__) {
+          console.error('[Vault bet] failed', placeError)
+        }
+        toast.error('Vault bet failed', { description: message })
+        await alert({ title: 'Vault bet failed', message })
+      } finally {
+        setIsPlacing(false)
+      }
       return
     }
 
@@ -225,13 +322,13 @@ export default function BetEventScreen() {
         console.error('[Azuro bet] failed', placeError)
       }
       toast.error('Bet failed', { description: message })
-      Alert.alert('Bet failed', message)
+      await alert({ title: 'Bet failed', message })
     } finally {
       setIsPlacing(false)
     }
   }
 
-  const cartHeight = selected ? 320 : 0
+  const cartHeight = selected ? (betMode === 'tipster' ? 380 : 320) : 0
 
   return (
     <View style={[styles.screen, { paddingTop: topPadding }]}>
@@ -317,7 +414,13 @@ export default function BetEventScreen() {
                               ]}
                               onPress={() => handleSelectOutcome(condition, outcome)}
                             >
-                              <Text style={styles.outcomeLabel} numberOfLines={2}>
+                              <Text
+                                style={[
+                                  styles.outcomeLabel,
+                                  isSelected && styles.outcomeLabelSelected,
+                                ]}
+                                numberOfLines={2}
+                              >
                                 {outcome.title}
                               </Text>
                               <OddsBadge odds={outcome.odds} selected={isSelected} />
@@ -336,11 +439,17 @@ export default function BetEventScreen() {
               <BetSlipCart
                 selection={selected}
                 mode={betMode}
-                onModeChange={setBetMode}
+                onModeChange={handleModeChange}
                 canBetAsTipster={canBetAsTipster}
                 tipsterLabel={tipsterLabel}
+                vaultTotalUsdt={vaultTotalUsdt}
+                vaultFreeUsdt={vaultFreeUsdt}
+                vaultTotalLabel={
+                  tipsterVault ? formatBetToken(tipsterVault.totalAssets) : undefined
+                }
                 stake={stake}
                 onStakeChange={setStake}
+                effectiveStakeUsdt={effectiveStakeUsdt}
                 potentialPayout={potentialPayout}
                 quoteText={quoteText}
                 placementBlockedReason={placementBlockedReason}
@@ -437,6 +546,15 @@ const styles = StyleSheet.create({
   outcomeButtonSelected: {
     borderColor: colors.primary,
     backgroundColor: colors.neonMuted,
+  },
+  outcomeLabel: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  outcomeLabelSelected: {
+    color: colors.primary,
   },
   cartWrap: {
     position: 'absolute',

@@ -26,6 +26,7 @@ contract VaultTest is SingletonTest {
     function test_second_depositor_gets_pro_rata_shares() public {
         TipsterVault vault = _createVault();
         address fan2 = makeAddr("fan2");
+        singleton.whitelistAddress(fan2);
         token.mint(fan2, 10_000e6);
 
         vm.startPrank(fan);

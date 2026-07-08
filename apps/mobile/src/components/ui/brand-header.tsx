@@ -1,7 +1,7 @@
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { useScreenTopPadding } from '@/hooks/use-screen-top-padding'
-import { StyleSheet, Text, View, type ViewStyle } from 'react-native'
+import { Image, StyleSheet, Text, View, type ViewStyle } from 'react-native'
 
 type Props = {
   title: string
@@ -34,7 +34,7 @@ export function BrandHeader({
     >
       <View style={styles.left}>
         <View style={styles.brandRow}>
-          <View style={styles.brandMark} />
+          <Image source={require('../../assets/images/brand-icon.png')} style={styles.brandIcon} resizeMode="contain" />
           <Text style={styles.brand}>THETABET</Text>
         </View>
         <Text style={[styles.title, compact && styles.titleCompact]}>{title}</Text>
@@ -67,12 +67,9 @@ const styles = StyleSheet.create({
     gap: 6,
     marginBottom: 2,
   },
-  brandMark: {
-    width: 8,
-    height: 8,
-    borderRadius: 1,
-    backgroundColor: colors.primary,
-    transform: [{ rotate: '45deg' }],
+  brandIcon: {
+    width: 22,
+    height: 22,
   },
   brand: {
     ...theme.typography.caption,

@@ -35,7 +35,9 @@ contract DeployAnvilMocks is Script {
         betToken = new MockBetToken();
         core = new MockAzuroCore();
         lp = new MockAzuroLP(betToken, core);
-        singleton = new ThetaSingleton(address(betToken), address(lp), address(core), address(0));
+        singleton = new ThetaSingleton(
+            address(betToken), address(lp), address(core), PolygonConfig.RELAYER, address(0)
+        );
 
         singleton.whitelistAddress(0x70997970c51812dc3A010c7D01B50C0D17Dc79C8);
         singleton.whitelistAddress(0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC);

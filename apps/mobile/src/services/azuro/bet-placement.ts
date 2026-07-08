@@ -274,7 +274,7 @@ export async function placeAzuroBet(params: PlaceBetParams): Promise<AzuroPlaced
 const ORDER_POLL_MS = 1500
 const ORDER_POLL_ATTEMPTS = 16
 
-async function waitForBetOrderResult(bettor: Address, orderId: string) {
+export async function waitForBetOrderResult(bettor: Address, orderId: string) {
   for (let attempt = 0; attempt < ORDER_POLL_ATTEMPTS; attempt += 1) {
     const order = await getBet({ chainId: AZURO_CHAIN_ID, orderId })
     if (

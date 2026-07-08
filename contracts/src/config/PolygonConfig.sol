@@ -14,5 +14,5 @@ library PolygonConfig {
     address internal constant RELAYER = 0x8dA05c0021e6b35865FDC959c54dCeF3A4AbBa9d;
 
     /// @dev Closed mainnet test — only this wallet may interact until deployer whitelists more.
-    address internal constant INITIAL_WHITELISTED_USER = 0xD4A514B89d59F0924B8c887073b3e49ec60Ffb68;
+    address internal constant INITIAL_WHITELISTED_USER = 0xe257cf8ECa1aF94117bEe3809F705bC6e51CbD5c;
 }

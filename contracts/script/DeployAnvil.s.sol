@@ -27,6 +27,7 @@ contract DeployAnvil is Script {
             PolygonConfig.BET_TOKEN,
             PolygonConfig.AZURO_LP,
             PolygonConfig.CLIENT_CORE,
+            PolygonConfig.RELAYER,
             address(0)
         );
 

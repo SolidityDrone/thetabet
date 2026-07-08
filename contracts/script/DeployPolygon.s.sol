@@ -18,6 +18,7 @@ contract DeployPolygon is Script {
             PolygonConfig.BET_TOKEN,
             PolygonConfig.AZURO_LP,
             PolygonConfig.CLIENT_CORE,
+            PolygonConfig.RELAYER,
             PolygonConfig.INITIAL_WHITELISTED_USER
         );
 

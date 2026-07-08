@@ -1,6 +1,4 @@
-import { WDK_NETWORK_KEY } from '@/config/chains'
 import { THETA_DEPLOYMENT } from '@/config/contracts.generated'
-import { getWdkManager } from '@/services/wdk-bare-api'
 import { WDKService } from '@tetherto/wdk-react-native-provider'
 import { getUniqueId } from 'react-native-device-info'
 import {
@@ -38,12 +36,25 @@ function evmDerivationPath(accountIndex: number) {
 }
 
 async function resolveWalletMnemonic(): Promise<string> {
-  const prf = await getUniqueId()
-  const mnemonic = await WDKService.retrieveSeed(prf)
-  if (!mnemonic?.trim()) {
-    throw new Error('Wallet seed is not available. Unlock or recreate your wallet.')
+  try {
+    const prf = await getUniqueId()
+    const mnemonic = await WDKService.retrieveSeed(prf)
+    if (!mnemonic?.trim()) {
+      throw new Error('Wallet seed is not available. Unlock or recreate your wallet.')
+    }
+    return mnemonic.trim()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes('Cancel') || message.includes('code: 13')) {
+      throw new Error('Biometric authentication was cancelled. Unlock your wallet and try again.')
+    }
+    throw error
   }
-  return mnemonic.trim()
+}
+
+/** Recovery phrase for wallet backup UI — never log or persist the return value. */
+export async function retrieveWalletMnemonic(): Promise<string> {
+  return resolveWalletMnemonic()
 }
 
 function getViemAccount(mnemonic: string, accountIndex = WDK_ACCOUNT_INDEX) {
@@ -67,15 +78,6 @@ export async function getWalletSecp256k1PublicKeyCoords(
 ): Promise<{ x: Hex; y: Hex }> {
   const mnemonic = await resolveWalletMnemonic()
   const account = getViemAccount(mnemonic, accountIndex)
-
-  const { address: walletAddress } = await getWdkManager().getAddress({
-    network: WDK_NETWORK_KEY,
-    accountIndex,
-  })
-  if (walletAddress.toLowerCase() !== account.address.toLowerCase()) {
-    throw new Error('Local signer address does not match the WDK wallet.')
-  }
-
   return secp256k1PublicKeyToCoords(account.publicKey)
 }
 
@@ -88,14 +90,6 @@ export async function sendSignedEvmTransaction(params: {
   const accountIndex = params.accountIndex ?? WDK_ACCOUNT_INDEX
   const mnemonic = await resolveWalletMnemonic()
   const account = getViemAccount(mnemonic, accountIndex)
-
-  const { address: walletAddress } = await getWdkManager().getAddress({
-    network: WDK_NETWORK_KEY,
-    accountIndex,
-  })
-  if (walletAddress.toLowerCase() !== account.address.toLowerCase()) {
-    throw new Error('Local signer address does not match the WDK wallet.')
-  }
 
   const rpc = getPublicClient()
   const gasEstimate = await rpc.estimateGas({
@@ -111,8 +105,7 @@ export async function sendSignedEvmTransaction(params: {
 
   if (balance < maxCost) {
     throw new Error(
-      `Insufficient POL for gas. Balance: ${formatEther(balance)} POL, needed: ~${formatEther(maxCost)} POL. ` +
-        'Vault creation deploys a contract and costs more than a simple transfer — fund the wallet with POL on Polygon, then retry.'
+      `Insufficient POL for gas on ${account.address}. Balance: ${formatEther(balance)} POL, needed: ~${formatEther(maxCost)} POL.`
     )
   }
 
@@ -154,26 +147,12 @@ export async function waitForEvmTransaction(hash: Hex) {
   return receipt
 }
 
+/** EIP-712 signatures use the EOA key; typedData.account may be the smart-wallet address. */
 export async function signEvmTypedData(
   typedData: SignTypedDataParameters
 ): Promise<Hex> {
   const mnemonic = await resolveWalletMnemonic()
   const account = getViemAccount(mnemonic)
-
-  const { address: walletAddress } = await getWdkManager().getAddress({
-    network: WDK_NETWORK_KEY,
-    accountIndex: WDK_ACCOUNT_INDEX,
-  })
-  if (walletAddress.toLowerCase() !== account.address.toLowerCase()) {
-    throw new Error('Local signer address does not match the WDK wallet.')
-  }
-
-  if (
-    typedData.account &&
-    account.address.toLowerCase() !== typedData.account.toLowerCase()
-  ) {
-    throw new Error('Typed data account does not match the unlocked wallet.')
-  }
 
   return account.signTypedData({
     domain: typedData.domain,

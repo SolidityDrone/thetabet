@@ -14,6 +14,8 @@ export PATH="$HOME/.nvm/versions/node/v20.19.2/bin:$PATH"
 
 PONDER_NETWORK="${PONDER_NETWORK:-polygon}"
 USE_TUNNEL="${USE_TUNNEL:-0}"
+PONDER_RPC_URL_1="${PONDER_RPC_URL_1:-https://polygon.drpc.org}"
+export PONDER_RPC_URL_1
 TUNNEL_FILE="$REPO_ROOT/apps/mobile/src/config/tunnel.generated.ts"
 PONDER_LOG="${TMPDIR:-/tmp}/thetabet-ponder.log"
 TUNNEL_LOG="${TMPDIR:-/tmp}/thetabet-tunnel.log"
@@ -26,7 +28,7 @@ cleanup() {
     kill "$TUNNEL_PID" 2>/dev/null || true
   fi
 }
-trap cleanup EXIT INT TERM
+trap cleanup INT TERM
 
 write_tunnel_url() {
   local url="$1"
@@ -51,21 +53,112 @@ setup_android_reverse() {
   echo "adb reverse tcp:42069 → host Ponder (app uses http://127.0.0.1:42069/graphql on USB Android)"
 }
 
-start_ponder() {
-  echo "Starting Ponder (PONDER_NETWORK=${PONDER_NETWORK}) ..."
-  cd "$REPO_ROOT/ponder"
-  PONDER_NETWORK="$PONDER_NETWORK" npm run dev >"$PONDER_LOG" 2>&1 &
-  PONDER_PID=$!
+ponder_health_ok() {
+  curl -sf http://127.0.0.1:42069/health >/dev/null 2>&1
+}
 
-  for _ in $(seq 1 60); do
-    if curl -sf http://127.0.0.1:42069/health >/dev/null 2>&1; then
-      echo "Ponder ready at http://localhost:42069/graphql"
+ponder_log_has_db_corruption() {
+  [ -f "$PONDER_LOG" ] && grep -qE "RuntimeError: Aborted|could not seek to end of file|InitWalRecovery" "$PONDER_LOG" 2>/dev/null
+}
+
+stop_stale_ponder() {
+  pkill -f "ponder/dist/esm/bin/ponder.js dev" 2>/dev/null || true
+  pkill -f "ponder dev --disable-ui" 2>/dev/null || true
+  for _ in $(seq 1 10); do
+    if ! ponder_health_ok; then
       return 0
     fi
     sleep 1
   done
+  pkill -9 -f "ponder/dist/esm/bin/ponder.js dev" 2>/dev/null || true
+  sleep 1
+}
+
+reset_ponder_db() {
+  echo "Resetting local Ponder database (ponder/.ponder/pglite) ..."
+  rm -rf "$REPO_ROOT/ponder/.ponder/pglite"
+}
+
+prepare_ponder_db() {
+  if [ "${PONDER_RESET_DB:-0}" = "1" ]; then
+    reset_ponder_db
+    return 0
+  fi
+  if ponder_log_has_db_corruption; then
+    reset_ponder_db
+  fi
+  return 0
+}
+
+truncate_ponder_log() {
+  mkdir -p "$(dirname "$PONDER_LOG")"
+  >"$PONDER_LOG"
+}
+
+launch_ponder() {
+  cd "$REPO_ROOT/ponder"
+  PONDER_NETWORK="$PONDER_NETWORK" npm run dev -- --disable-ui >>"$PONDER_LOG" 2>&1 &
+  PONDER_PID=$!
+}
+
+wait_for_ponder_ready() {
+  local attempts="${1:-90}"
+  local i
+  for i in $(seq 1 "$attempts"); do
+    if ponder_health_ok; then
+      return 0
+    fi
+    if ponder_log_has_db_corruption; then
+      return 2
+    fi
+    if [ -n "${PONDER_PID:-}" ] && ! kill -0 "$PONDER_PID" 2>/dev/null; then
+      return 1
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+start_ponder() {
+  echo "Starting Ponder (PONDER_NETWORK=${PONDER_NETWORK}) ..."
+
+  stop_stale_ponder
+
+  if ponder_health_ok; then
+    echo "Ponder ready at http://localhost:42069/graphql (already running)"
+    PONDER_PID=""
+    return 0
+  fi
+
+  prepare_ponder_db
+  truncate_ponder_log
+
+  launch_ponder
+
+  wait_for_ponder_ready 90
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "Ponder ready at http://localhost:42069/graphql"
+    return 0
+  fi
+
+  if [ "$rc" -eq 2 ] || ponder_log_has_db_corruption; then
+    echo "Ponder database looks corrupt - resetting and retrying once ..."
+    stop_stale_ponder
+    reset_ponder_db
+    truncate_ponder_log
+    launch_ponder
+    if wait_for_ponder_ready 90; then
+      echo "Ponder ready at http://localhost:42069/graphql"
+      return 0
+    fi
+  fi
+
+  stop_stale_ponder
   echo "Ponder failed to start — see $PONDER_LOG"
-  tail -30 "$PONDER_LOG" || true
+  tail -40 "$PONDER_LOG" || true
+  echo ""
+  echo "Try a clean reset: PONDER_RESET_DB=1 npm run dev:stack:tunnel"
   exit 1
 }
 
@@ -112,4 +205,19 @@ fi
 echo ""
 echo "Mobile: reload Metro / shake device after tunnel URL sync (URL changes each run)."
 echo "Press Ctrl+C to stop (stops Ponder + tunnel — Profile tab will fail until you restart)."
-wait "$PONDER_PID"
+echo "Ponder logs: ${PONDER_LOG}"
+
+while true; do
+  if ponder_health_ok; then
+    sleep 3
+    continue
+  fi
+  if [ -n "${PONDER_PID:-}" ] && kill -0 "$PONDER_PID" 2>/dev/null; then
+    sleep 3
+    continue
+  fi
+  echo ""
+  echo "Ponder stopped unexpectedly — last log lines:"
+  tail -50 "$PONDER_LOG" || true
+  exit 1
+done

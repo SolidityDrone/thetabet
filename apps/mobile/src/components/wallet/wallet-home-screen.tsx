@@ -9,6 +9,7 @@ import {
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { useAppMode } from '@/context/app-mode'
+import { useConfirmSheet } from '@/context/confirm-sheet'
 import { useWalletPortfolio } from '@/hooks/use-wallet-portfolio'
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation'
 import { useTabBarHeight } from '@/hooks/use-tab-bar-height'
@@ -16,7 +17,6 @@ import { Settings, ExternalLink } from 'lucide-react-native'
 import { useCallback } from 'react'
 import {
   ActivityIndicator,
-  Alert,
   Linking,
   RefreshControl,
   ScrollView,
@@ -28,6 +28,7 @@ import {
 
 export function WalletHomeScreen() {
   const router = useDebouncedNavigation()
+  const { alert, confirm } = useConfirmSheet()
   const { useRealWallet } = useAppMode()
   const {
     chain,
@@ -43,12 +44,12 @@ export function WalletHomeScreen() {
     refresh,
   } = useWalletPortfolio()
 
-  const handleReceive = useCallback(() => {
+  const handleReceive = useCallback(async () => {
     if (!address) {
-      Alert.alert(
-        'Address not ready',
-        'Your Polygon address is still loading. Wait a moment and try again.'
-      )
+      await alert({
+        title: 'Address not ready',
+        message: 'Your Polygon address is still loading. Wait a moment and try again.',
+      })
       return
     }
     router.push({
@@ -59,21 +60,19 @@ export function WalletHomeScreen() {
         address,
       },
     })
-  }, [address, chain.name, chain.nativeSymbol, router])
+  }, [address, alert, chain.name, chain.nativeSymbol, router])
 
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     if (hasSkippedWallet) {
-      Alert.alert(
-        'Send requires a real wallet',
-        'Dev skip wallet is read-only. Set up a WDK wallet to send tokens.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Set up wallet',
-            onPress: () => useRealWallet().then(() => router.replace('/onboarding')),
-          },
-        ]
-      )
+      const setup = await confirm({
+        title: 'Send requires a real wallet',
+        message: 'Dev skip wallet is read-only. Set up a WDK wallet to send tokens.',
+        confirmLabel: 'Set up wallet',
+      })
+      if (setup) {
+        await useRealWallet()
+        router.replace('/onboarding')
+      }
       return
     }
     if (!canSend) {
@@ -81,31 +80,30 @@ export function WalletHomeScreen() {
       return
     }
     router.push('/send/select-token')
-  }, [canSend, hasSkippedWallet, router, useRealWallet])
+  }, [canSend, confirm, hasSkippedWallet, router, useRealWallet])
 
-  const handleSettings = useCallback(() => {
+  const handleSettings = useCallback(async () => {
     if (hasSkippedWallet) {
-      Alert.alert(
-        'Dev wallet',
-        'Using stub address on Polygon. Set up a real wallet for signing and sending.',
-        [
-          { text: 'OK' },
-          {
-            text: 'Set up wallet',
-            onPress: () => useRealWallet().then(() => router.replace('/onboarding')),
-          },
-        ]
-      )
+      const setup = await confirm({
+        title: 'Dev wallet',
+        message: 'Using stub address on Polygon. Set up a real wallet for signing and sending.',
+        confirmLabel: 'Set up wallet',
+        cancelLabel: 'OK',
+      })
+      if (setup) {
+        await useRealWallet()
+        router.replace('/onboarding')
+      }
       return
     }
     router.push('/settings')
-  }, [hasSkippedWallet, router, useRealWallet])
+  }, [confirm, hasSkippedWallet, router, useRealWallet])
 
   const openFaucet = useCallback((url: string) => {
     Linking.openURL(url).catch(() => {
-      Alert.alert('Could not open link', url)
+      void alert({ title: 'Could not open link', message: url })
     })
-  }, [])
+  }, [alert])
 
   return (
     <View style={styles.container}>

@@ -1,5 +1,5 @@
 import { CommonActions, useNavigation } from '@react-navigation/native';
-import { clearEmptyWalletAddressCache } from '@/services/patch-wdk-service'
+import { clearEmptyWalletAddressCache, resetWalletAddressCache } from '@/services/patch-wdk-service'
 import { useAppMode } from '@/context/app-mode'
 import { useWallet } from '@tetherto/wdk-react-native-provider';
 import { useLocalSearchParams } from 'expo-router';
@@ -30,6 +30,7 @@ export default function CompleteScreen() {
       const mnemonic = params.mnemonic.split(',').join(' ');
 
       await clearEmptyWalletAddressCache();
+      await resetWalletAddressCache();
 
       // Use the wallet context to create the wallet
       await createWallet({

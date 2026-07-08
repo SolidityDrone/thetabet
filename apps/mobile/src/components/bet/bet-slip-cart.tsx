@@ -1,11 +1,11 @@
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { azuroBetToken } from '@/config/azuro'
+import { useConfirmSheet } from '@/context/confirm-sheet'
 import type { AzuroBetMode, AzuroBetSelection } from '@/types/azuro'
 import { X } from 'lucide-react-native'
 import {
   ActivityIndicator,
-  Alert,
   StyleSheet,
   Text,
   TextInput,
@@ -14,14 +14,20 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+const TIPSTER_QUICK_STAKES = ['1', '2', '5', '10', '25']
+
 type Props = {
   selection: AzuroBetSelection
   mode: AzuroBetMode
   onModeChange: (mode: AzuroBetMode) => void
   canBetAsTipster: boolean
   tipsterLabel?: string
+  vaultTotalUsdt?: number
+  vaultFreeUsdt?: number
+  vaultTotalLabel?: string
   stake: string
   onStakeChange: (value: string) => void
+  effectiveStakeUsdt: number
   potentialPayout: number
   quoteText: string | null
   placementBlockedReason?: string | null
@@ -36,8 +42,12 @@ export function BetSlipCart({
   onModeChange,
   canBetAsTipster,
   tipsterLabel,
+  vaultTotalUsdt = 0,
+  vaultFreeUsdt = 0,
+  vaultTotalLabel,
   stake,
   onStakeChange,
+  effectiveStakeUsdt,
   potentialPayout,
   quoteText,
   placementBlockedReason,
@@ -46,27 +56,67 @@ export function BetSlipCart({
   onConfirm,
 }: Props) {
   const insets = useSafeAreaInsets()
+  const { confirm, alert } = useConfirmSheet()
+  const isTipster = mode === 'tipster'
 
-  const handleConfirmPress = () => {
+  const handleConfirmPress = async () => {
     const stakeNum = Number(stake)
-    if (!Number.isFinite(stakeNum) || stakeNum <= 0) {
-      Alert.alert('Invalid stake', 'Enter a valid stake amount.')
+
+    if (isTipster) {
+      if (!Number.isFinite(stakeNum) || stakeNum <= 0 || stakeNum > 100) {
+        await alert({
+          title: 'Invalid stake',
+          message: 'Enter a vault stake between 0.1% and 100%.',
+        })
+        return
+      }
+      if (effectiveStakeUsdt <= 0) {
+        await alert({
+          title: 'Vault empty',
+          message: 'Your vault has no liquidity to stake on this bet.',
+        })
+        return
+      }
+      if (vaultFreeUsdt > 0 && effectiveStakeUsdt > vaultFreeUsdt + 0.000001) {
+        await alert({
+          title: 'Not enough free liquidity',
+          message: `Only ~${vaultFreeUsdt.toFixed(2)} USDT is free in your vault right now. Lower the stake % or wait for open bets to settle.`,
+        })
+        return
+      }
+    } else if (!Number.isFinite(stakeNum) || stakeNum <= 0) {
+      await alert({ title: 'Invalid stake', message: 'Enter a valid stake amount.' })
       return
     }
 
     if (placementBlockedReason) {
-      Alert.alert('Bet not available', placementBlockedReason)
+      await alert({ title: 'Bet not available', message: placementBlockedReason })
       return
     }
 
-    if (mode === 'tipster') {
-      Alert.alert('Coming soon', 'Vault (tipster) bets are not wired yet. Use “Per se” for now.')
+    if (isTipster) {
+      const confirmed = await confirm({
+        title: 'Confirm vault bet',
+        message: [
+          `${selection.gameTitle}`,
+          `${selection.conditionTitle} · ${selection.outcomeTitle}`,
+          `Odds ${selection.decimalOdds.toFixed(2)}`,
+          `Vault stake ${stake}% (~${effectiveStakeUsdt.toFixed(2)} USDT)`,
+          `Potential win ${potentialPayout.toFixed(2)} ${azuroBetToken.symbol}`,
+          '',
+          'This places an on-chain Azuro bet from your vault liquidity.',
+        ].join('\n'),
+        confirmLabel: 'Place vault bet',
+      })
+      if (confirmed) {
+        onConfirm()
+      }
       return
     }
 
-    Alert.alert(
-      'Confirm bet',
-      [
+    const confirmed = await confirm({
+      title: 'Confirm bet',
+      message: [
         `${selection.gameTitle}`,
         `${selection.conditionTitle} · ${selection.outcomeTitle}`,
         `Odds ${selection.decimalOdds.toFixed(2)}`,
@@ -75,11 +125,12 @@ export function BetSlipCart({
         '',
         'This will approve USDT for the Azuro relayer, then submit your bet.',
       ].join('\n'),
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Approve & bet', onPress: onConfirm },
-      ]
-    )
+      confirmLabel: 'Approve & bet',
+    })
+
+    if (confirmed) {
+      onConfirm()
+    }
   }
 
   return (
@@ -113,7 +164,7 @@ export function BetSlipCart({
         <TouchableOpacity
           style={[
             styles.modeChip,
-            mode === 'tipster' && styles.modeChipActive,
+            isTipster && styles.modeChipActive,
             !canBetAsTipster && styles.modeChipDisabled,
           ]}
           disabled={!canBetAsTipster}
@@ -122,7 +173,7 @@ export function BetSlipCart({
           <Text
             style={[
               styles.modeChipText,
-              mode === 'tipster' && styles.modeChipTextActive,
+              isTipster && styles.modeChipTextActive,
               !canBetAsTipster && styles.modeChipTextDisabled,
             ]}
           >
@@ -131,22 +182,55 @@ export function BetSlipCart({
         </TouchableOpacity>
       </View>
       {canBetAsTipster && tipsterLabel ? (
-        <Text style={styles.tipsterHint}>Vault: {tipsterLabel}</Text>
+        <Text style={styles.tipsterHint}>
+          Vault: {tipsterLabel}
+          {vaultTotalLabel ? ` · ${vaultTotalLabel} USDT total` : ''}
+          {vaultFreeUsdt > 0 ? ` · ${vaultFreeUsdt.toFixed(2)} free` : ''}
+        </Text>
       ) : (
         <Text style={styles.tipsterHint}>Tipster vault bets need a profile setup first.</Text>
       )}
 
+      {isTipster ? (
+        <View style={styles.quickStakeRow}>
+          {TIPSTER_QUICK_STAKES.map((value) => (
+            <TouchableOpacity
+              key={value}
+              style={[styles.quickStakeChip, stake === value && styles.quickStakeChipActive]}
+              onPress={() => onStakeChange(value)}
+            >
+              <Text
+                style={[
+                  styles.quickStakeText,
+                  stake === value && styles.quickStakeTextActive,
+                ]}
+              >
+                {value}%
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : null}
+
       <View style={styles.stakeRow}>
         <View style={styles.stakeInputWrap}>
-          <Text style={styles.inputLabel}>Stake ({azuroBetToken.symbol})</Text>
+          <Text style={styles.inputLabel}>
+            {isTipster ? 'Vault stake (%)' : `Stake (${azuroBetToken.symbol})`}
+          </Text>
           <TextInput
             style={styles.input}
             value={stake}
             onChangeText={onStakeChange}
             keyboardType="decimal-pad"
-            placeholder="1"
+            placeholder={isTipster ? '5' : '1'}
             placeholderTextColor={colors.textTertiary}
           />
+          {isTipster ? (
+            <Text style={styles.stakeHint}>
+              ~{effectiveStakeUsdt > 0 ? effectiveStakeUsdt.toFixed(2) : '0.00'} USDT from vault
+              {vaultTotalUsdt > 0 ? ` (${stake || '0'}% of ${vaultTotalUsdt.toFixed(2)})` : ''}
+            </Text>
+          ) : null}
         </View>
         <View style={styles.payoutBox}>
           <Text style={styles.payoutLabel}>Potential win</Text>
@@ -176,9 +260,9 @@ export function BetSlipCart({
           <Text style={styles.confirmButtonText}>
             {placementBlockedReason
               ? 'Not bettable on-chain yet'
-              : mode === 'personal'
-                ? 'Approve & place bet'
-                : 'Place vault bet'}
+              : isTipster
+                ? 'Place vault bet'
+                : 'Approve & place bet'}
           </Text>
         )}
       </TouchableOpacity>
@@ -269,6 +353,31 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
   },
+  quickStakeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  quickStakeChip: {
+    borderRadius: theme.radius.sharp,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.cardDark,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  quickStakeChipActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.neonMuted,
+  },
+  quickStakeText: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  quickStakeTextActive: {
+    color: colors.primary,
+  },
   stakeRow: {
     flexDirection: 'row',
     gap: 8,
@@ -281,6 +390,7 @@ const styles = StyleSheet.create({
   inputLabel: {
     ...theme.typography.caption,
     fontSize: 10,
+    color: colors.textTertiary,
   },
   input: {
     borderRadius: theme.radius.sharp,
@@ -292,6 +402,12 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     fontSize: 15,
     fontWeight: '700',
+  },
+  stakeHint: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '600',
+    lineHeight: 14,
   },
   payoutBox: {
     minWidth: 108,

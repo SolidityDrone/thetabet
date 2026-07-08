@@ -1,11 +1,9 @@
 import { useWallet } from '@tetherto/wdk-react-native-provider';
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation';
 import { Fingerprint, Shield } from 'lucide-react-native';
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import parseWorkletError from '@/utils/parse-worklet-error';
-import { clearEmptyWalletAddressCache } from '@/services/patch-wdk-service';
 import { colors } from '@/constants/colors';
 import getErrorMessage from '@/utils/get-error-message';
 
@@ -15,11 +13,6 @@ export default function AuthorizeScreen() {
   const { wallet, unlockWallet } = useWallet();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    handleAuthorize();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const handleAuthorize = async () => {
     if (!wallet) {
@@ -32,7 +25,6 @@ export default function AuthorizeScreen() {
     setError(null);
 
     try {
-      await clearEmptyWalletAddressCache();
       const isDone = await unlockWallet();
       if (isDone) {
         router.replace('/(tabs)');

@@ -15,7 +15,7 @@ Configured in `src/config/PolygonConfig.sol`:
 
 Environment: `PolygonUSDT` · chain id **137**
 
-**Access control:** mainnet deploy seeds whitelist with `0xD4A514B89d59F0924B8c887073b3e49ec60Ffb68`. Only the deployer (`0xDD7D64BF…`) may call `whitelistAddress` / `removeWhitelistAddress`.
+**Access control:** mainnet deploy seeds whitelist with `0xe257cf8ECa1aF94117bEe3809F705bC6e51CbD5c`. Only the deployer (`0xDD7D64BF…`) may call `whitelistAddress` / `removeWhitelistAddress`.
 
 ## Deploy
 

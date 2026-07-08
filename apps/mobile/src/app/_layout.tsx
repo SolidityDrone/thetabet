@@ -15,6 +15,7 @@ import 'react-native-reanimated';
 import getChainsConfig from '@/config/get-chains-config';
 import { AppModeProvider } from '@/context/app-mode';
 import { PearChatProvider } from '@/context/pear-chat';
+import { ConfirmSheetProvider } from '@/context/confirm-sheet';
 import { Toaster } from 'sonner-native';
 import { colors } from '@/constants/colors';
 
@@ -68,6 +69,7 @@ export default function RootLayout() {
             }}
           >
             <PearChatProvider>
+              <ConfirmSheetProvider>
               <NavigationThemeProvider value={CustomDarkTheme}>
                 <View style={{ flex: 1, backgroundColor: colors.background }}>
                   <Stack
@@ -79,6 +81,7 @@ export default function RootLayout() {
                   <StatusBar style="light" />
                 </View>
               </NavigationThemeProvider>
+              </ConfirmSheetProvider>
             </PearChatProvider>
           </WalletProvider>
         </AppModeProvider>

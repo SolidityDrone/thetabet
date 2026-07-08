@@ -81,7 +81,9 @@ contract MockAzuroLP is IAzuroLP {
 
     function viewPayout(address, uint256 tokenId) external view returns (uint128) {
         Bet storage bet = bets[tokenId];
-        if (bet.claimed || !bet.resolved || !bet.won) return 0;
+        // Match real Azuro LP: reverts for unresolved/open bets instead of returning 0.
+        require(bet.resolved, "BetNotResolved");
+        if (bet.claimed || !bet.won) return 0;
         return bet.payout;
     }
 

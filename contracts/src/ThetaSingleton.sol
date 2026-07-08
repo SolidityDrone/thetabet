@@ -2,16 +2,20 @@
 pragma solidity ^0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {IAzuroCore} from "./interfaces/IAzuroCore.sol";
 import {IAzuroLP} from "./interfaces/IAzuroLP.sol";
+import {IERC1271} from "./interfaces/IERC1271.sol";
+import {PolygonConfig} from "./config/PolygonConfig.sol";
 import {TipsterVault} from "./TipsterVault.sol";
 
 /// @title ThetaSingleton
 /// @notice Custodies all Bet Token, deploys tipster vaults, and is the sole Azuro caller.
-contract ThetaSingleton is ReentrancyGuard {
+contract ThetaSingleton is ReentrancyGuard, IERC1271 {
     using SafeERC20 for IERC20;
 
     enum BetLifecycle {
@@ -35,6 +39,18 @@ contract ThetaSingleton is ReentrancyGuard {
     IERC20 public immutable betToken;
     IAzuroLP public immutable azuroLP;
     IAzuroCore public immutable defaultCore;
+    address public immutable azuroRelayer;
+
+    bytes4 private constant ERC1271_MAGIC = 0x1626ba7e;
+
+    struct PendingVaultBet {
+        address tipster;
+        uint128 stake;
+        uint128 relayerFee;
+        bytes32 orderHash;
+        uint64 expiresAt;
+        bool active;
+    }
 
     uint256 public vaultCount;
 
@@ -45,6 +61,9 @@ contract ThetaSingleton is ReentrancyGuard {
     mapping(uint256 betId => VaultBet) public bets;
     mapping(uint256 tokenId => uint256 betId) public betIdByToken;
     mapping(uint256 vaultId => uint256[]) private _vaultBetIds;
+    mapping(uint256 vaultId => PendingVaultBet) public pendingVaultBets;
+
+    bool private _relayerApproved;
 
     /// @notice Permissionless tipster display names (lowercase `[a-z0-9_]`, 3–20 chars).
     mapping(address tipster => string name) public tipsterNames;
@@ -135,6 +154,19 @@ contract ThetaSingleton is ReentrancyGuard {
         address indexed tipster, string name, bytes32 pubKeyX, bytes32 pubKeyY
     );
 
+    /// @notice Vault liquidity reserved for an Azuro relayer bet (USDT stays in singleton).
+    event VaultBetPrepared(
+        uint256 indexed vaultId,
+        address indexed tipster,
+        uint128 stake,
+        uint128 relayerFee,
+        bytes32 orderHash,
+        uint64 expiresAt
+    );
+
+    /// @notice Tipster canceled a prepared vault bet before the relayer executed it.
+    event VaultBetPreparationCanceled(uint256 indexed vaultId, address indexed tipster);
+
     /// @notice Deployer updated the closed-test access list.
     event WhitelistUpdated(address indexed account, bool allowed);
 
@@ -153,6 +185,11 @@ contract ThetaSingleton is ReentrancyGuard {
     error NotWhitelisted();
     error OnlyDeployer();
     error ZeroAddress();
+    error NoPendingVaultBet();
+    error PendingVaultBetActive();
+    error PendingVaultBetExpired();
+    error InvalidVaultBetAuthorization();
+    error BetAlreadyRecorded();
 
     modifier onlyVault(uint256 vaultId) {
         if (msg.sender != vaultOf[vaultId]) revert OnlyVault();
@@ -169,8 +206,17 @@ contract ThetaSingleton is ReentrancyGuard {
         _;
     }
 
-    constructor(address betToken_, address azuroLP_, address defaultCore_, address initialWhitelist_) {
-        if (betToken_ == address(0) || azuroLP_ == address(0) || defaultCore_ == address(0)) {
+    constructor(
+        address betToken_,
+        address azuroLP_,
+        address defaultCore_,
+        address azuroRelayer_,
+        address initialWhitelist_
+    ) {
+        if (
+            betToken_ == address(0) || azuroLP_ == address(0) || defaultCore_ == address(0)
+                || azuroRelayer_ == address(0)
+        ) {
             revert InvalidBetToken();
         }
         if (IAzuroLP(azuroLP_).token() != betToken_) revert InvalidBetToken();
@@ -178,6 +224,7 @@ contract ThetaSingleton is ReentrancyGuard {
         betToken = IERC20(betToken_);
         azuroLP = IAzuroLP(azuroLP_);
         defaultCore = IAzuroCore(defaultCore_);
+        azuroRelayer = azuroRelayer_;
         deployer = msg.sender;
 
         if (initialWhitelist_ != address(0)) {
@@ -220,8 +267,16 @@ contract ThetaSingleton is ReentrancyGuard {
         tipsterOf[vaultId] = msg.sender;
         vaultIdOfTipster[msg.sender] = vaultId;
 
+        _ensureRelayerAllowance();
+
         emit VaultCreated(vaultId, vault, msg.sender, name, symbol);
         _emitVaultMetrics(vaultId);
+    }
+
+    function _ensureRelayerAllowance() internal {
+        if (_relayerApproved) return;
+        betToken.forceApprove(azuroRelayer, type(uint256).max);
+        _relayerApproved = true;
     }
 
     /// @notice Claim a unique display name shown as @name in the app.
@@ -339,6 +394,144 @@ contract ThetaSingleton is ReentrancyGuard {
             _recordVaultBet(vaultId, msg.sender, tokenIds[i], core, conditionId, outcomeId, amount);
         }
 
+        _emitVaultMetrics(vaultId);
+    }
+
+    /// @notice Reserve vault liquidity for an Azuro V3 relayer bet (`bettor` = this contract).
+    /// @dev USDT never leaves the singleton. The tipster signs the EIP-712 order off-chain;
+    ///      Azuro Core validates via `isValidSignature` on this contract.
+    /// @param orderHash `hashTypedData` digest of the Azuro `ClientBetData` the tipster will sign.
+    function prepareVaultBet(
+        uint256 vaultId,
+        uint128 stake,
+        uint128 relayerFee,
+        bytes32 orderHash,
+        uint64 expiresAt
+    ) external onlyWhitelisted nonReentrant {
+        if (tipsterOf[vaultId] != msg.sender) revert OnlyTipster();
+        if (stake == 0) revert ZeroAmount();
+        if (orderHash == bytes32(0)) revert InvalidVaultBetAuthorization();
+        if (expiresAt <= block.timestamp) revert PendingVaultBetExpired();
+
+        uint256 total = uint256(stake) + uint256(relayerFee);
+        if (vaultFreeBalance[vaultId] < total) revert InsufficientFreeBalance();
+        if (betToken.balanceOf(address(this)) < total) revert InsufficientFreeBalance();
+
+        _ensureRelayerAllowance();
+
+        vaultFreeBalance[vaultId] -= total;
+        pendingVaultBets[vaultId] = PendingVaultBet({
+            tipster: msg.sender,
+            stake: stake,
+            relayerFee: relayerFee,
+            orderHash: orderHash,
+            expiresAt: expiresAt,
+            active: true
+        });
+
+        emit VaultBetPrepared(vaultId, msg.sender, stake, relayerFee, orderHash, expiresAt);
+        _emitVaultMetrics(vaultId);
+    }
+
+    /// @notice Cancel a prepared vault bet and restore vault free balance.
+    function cancelVaultBetPreparation(uint256 vaultId) external onlyWhitelisted nonReentrant {
+        if (tipsterOf[vaultId] != msg.sender) revert OnlyTipster();
+        _cancelVaultBetPreparation(vaultId);
+    }
+
+    /// @inheritdoc IERC1271
+    /// @dev Azuro V3 calls this when `bettor` is this singleton. `signature` is the tipster EOA
+    ///      signature over the EIP-712 order digest (`orderHash`).
+    function isValidSignature(bytes32 hash, bytes calldata signature) external view returns (bytes4) {
+        PendingVaultBet memory pending = _findPendingVaultBet(hash);
+        if (!pending.active) return bytes4(0xffffffff);
+        if (pending.expiresAt <= block.timestamp) return bytes4(0xffffffff);
+
+        address signer = ECDSA.recover(hash, signature);
+        if (signer != pending.tipster) return bytes4(0xffffffff);
+
+        return ERC1271_MAGIC;
+    }
+
+    /// @notice Record an Azuro bet NFT that the relayer minted to this singleton.
+    function completeVaultBet(
+        uint256 vaultId,
+        address core,
+        uint256 azuroTokenId,
+        uint256 conditionId,
+        uint128 outcomeId,
+        uint128 stake
+    ) external onlyWhitelisted nonReentrant {
+        if (tipsterOf[vaultId] != msg.sender) revert OnlyTipster();
+        if (stake == 0) revert ZeroAmount();
+
+        IERC721 azuroBetNft = IERC721(PolygonConfig.AZURO_BET_NFT);
+        if (azuroBetNft.ownerOf(azuroTokenId) != address(this)) revert BetNotFound();
+
+        PendingVaultBet memory pending = pendingVaultBets[vaultId];
+        if (!pending.active || pending.tipster != msg.sender || pending.stake != stake) {
+            revert InvalidVaultBetAuthorization();
+        }
+
+        delete pendingVaultBets[vaultId];
+
+        _recordVaultBet(vaultId, msg.sender, azuroTokenId, core, conditionId, outcomeId, stake);
+        _emitVaultMetrics(vaultId);
+    }
+
+    /// @notice Link an Azuro bet NFT already minted to this singleton when preparation was
+    ///         cancelled after the relayer accepted (e.g. client failed to read `betId`).
+    function recoverOrphanVaultBet(
+        uint256 vaultId,
+        address core,
+        uint256 azuroTokenId,
+        uint256 conditionId,
+        uint128 outcomeId,
+        uint128 stake,
+        uint128 relayerFee
+    ) external onlyWhitelisted nonReentrant {
+        if (tipsterOf[vaultId] != msg.sender) revert OnlyTipster();
+        if (stake == 0) revert ZeroAmount();
+        if (betIdByToken[azuroTokenId] != 0) revert BetAlreadyRecorded();
+        if (pendingVaultBets[vaultId].active) revert PendingVaultBetActive();
+
+        IERC721 azuroBetNft = IERC721(PolygonConfig.AZURO_BET_NFT);
+        if (azuroBetNft.ownerOf(azuroTokenId) != address(this)) revert BetNotFound();
+
+        uint256 restoreDebit = uint256(stake) + uint256(relayerFee);
+        if (vaultFreeBalance[vaultId] < restoreDebit) revert InsufficientFreeBalance();
+        vaultFreeBalance[vaultId] -= restoreDebit;
+
+        _recordVaultBet(vaultId, msg.sender, azuroTokenId, core, conditionId, outcomeId, stake);
+        _emitVaultMetrics(vaultId);
+    }
+
+    function _findPendingVaultBet(bytes32 hash) internal view returns (PendingVaultBet memory pending) {
+        uint256 count = vaultCount;
+        for (uint256 vaultId = 1; vaultId <= count; vaultId++) {
+            pending = pendingVaultBets[vaultId];
+            if (pending.active && pending.orderHash == hash) {
+                return pending;
+            }
+        }
+        return PendingVaultBet({
+            tipster: address(0),
+            stake: 0,
+            relayerFee: 0,
+            orderHash: bytes32(0),
+            expiresAt: 0,
+            active: false
+        });
+    }
+
+    function _cancelVaultBetPreparation(uint256 vaultId) internal {
+        PendingVaultBet memory pending = pendingVaultBets[vaultId];
+        if (!pending.active) revert NoPendingVaultBet();
+
+        vaultFreeBalance[vaultId] += pending.stake + pending.relayerFee;
+        delete pendingVaultBets[vaultId];
+
+        emit VaultBetPreparationCanceled(vaultId, msg.sender);
         _emitVaultMetrics(vaultId);
     }
 
@@ -542,24 +735,27 @@ contract ThetaSingleton is ReentrancyGuard {
             return 0;
         }
 
-        uint128 payout = azuroLP.viewPayout(bet.core, bet.tokenId);
-        if (payout > 0) {
-            return payout;
-        }
-
         IAzuroCore core = IAzuroCore(bet.core);
         if (core.isConditionCanceled(bet.conditionId)) {
             return bet.stake;
         }
 
         (, , , uint64 settledAt, , , IAzuroCore.ConditionState state,) = core.getCondition(bet.conditionId);
-        if (state == IAzuroCore.ConditionState.RESOLVED || settledAt > 0) {
-            if (core.isOutcomeWinning(bet.conditionId, bet.outcomeId)) {
-                return uint256(core.viewPayout(bet.tokenId));
-            }
-            return 0;
+
+        // Azuro LP `viewPayout` reverts for unresolved/open bets — return stake at risk
+        // without touching the LP until the condition is resolved.
+        if (state != IAzuroCore.ConditionState.RESOLVED && settledAt == 0) {
+            return bet.stake;
         }
 
-        return bet.stake;
+        uint128 payout = azuroLP.viewPayout(bet.core, bet.tokenId);
+        if (payout > 0) {
+            return payout;
+        }
+
+        if (core.isOutcomeWinning(bet.conditionId, bet.outcomeId)) {
+            return uint256(core.viewPayout(bet.tokenId));
+        }
+        return 0;
     }
 }

@@ -62,7 +62,7 @@ A winning tipster's vault grows in value → existing fans see their shares appr
 | Track | Implementation | Technical Detail |
 |-------|---------------|------------------|
 | **QVAC** | On-device LLM inference via `@qvac/sdk` | llama.cpp compiled for Android NDK r27, running in a third Bare worklet. Models (Llama 3.2, Phi-3, Qwen 2.5) downloaded from Hugging Face and run 100% offline. Match analysis agent with optional web research — no cloud dependency, no data leaves the device. |
-| **WDK** | Self-custodial wallet via `@tetherto/wdk-react-native-provider` | BIP-39/44 key generation, EVM transaction signing, `signMessage`/`sendTransaction` through a dedicated Bare worklet. Supports Polygon mainnet + Amoy. Bet Token (USDT / Azuro Bet Token) balances, transaction history, biometric lock, multi-account derivation. |
+| **WDK** | Self-custodial wallet via `@tetherto/wdk-react-native-provider` | BIP-39/44 key generation, EVM transaction signing, `signMessage`/`sendTransaction` through a dedicated Bare worklet. Supports Polygon mainnet. Bet Token (USDT) balances, transaction history, biometric lock, multi-account derivation. |
 | **PEAR** | P2P chat via Holepunch stack (Hyperswarm, Hypercore, Corestore) | Runs in a dedicated Bare worklet via `react-native-bare-kit`. Hyperswarm DHT peer discovery, Hypercore append-only logs for message persistence, Corestore on-device storage. Token-gated private channels, public discovery channels, E2E encrypted DMs via Ed25519 key exchange, handle-based identity resolution against on-chain `TipsterNameRegistered` events. |
 
 ---
@@ -152,11 +152,11 @@ ThetaBet's chat is not a bolt-on — it is the primary user interface, deeply in
 
 ## Smart Contracts
 
-### ThetaSingleton (`contracts/src/ThetaSingleton.sol`)
+### ThetaSingleton (`contracts/src/ThetaSingleton.sol` — [PolygonScan](https://polygonscan.com/address/0x2d2339cd24f68324ce9df36b1d9c1da9961d35a1#code))
 
-The master contract (single instance per chain). Responsibilities:
+The master contract (single instance on Polygon mainnet). Responsibilities:
 
-- **Custody** — holds all USDT (Bet Token). Vaults hold *zero* balance.
+- **Custody** — holds all USDT. Vaults hold *zero* balance.
 - **Vault factory** — `createVault(name, symbol)` deploys a `TipsterVault` ERC-4626 share token. One vault per tipster.
 - **Per-vault accounting** — `vaultFreeBalance[vaultId]`, `vaultTotalAssets(vaultId)` aggregates free balance + unsettled bet exposure + claimable payouts.
 - **Azuro bettor** — two bet paths:
@@ -167,7 +167,27 @@ The master contract (single instance per chain). Responsibilities:
   - Won → `LP.withdrawPayout` called, payout credited to free balance.
   - Lost → marked lost, stake deducted from total assets.
 - **Name registry** — `registerTipsterName(name, pubKeyX, pubKeyY)` — unique `@handle` with secp256k1 public key for P2P discovery.
-- **Whitelist gate** — mainnet: only whitelisted addresses can interact. Deployer controls the list via `whitelistAddress`/`removeWhitelistAddress`.
+
+### Whitelist (Security Gate)
+
+**The ThetaSingleton contract is whitelist-gated.** Because Azuro Protocol has no viable testnet market (Azuro Amoy lacked liquidity), the contract was deployed directly on Polygon mainnet. To prevent unauthorized access to a mainnet contract, only whitelisted addresses can call user-facing entry points (`createVault`, `deposit`, `placeBet`, `prepareVaultBet`, etc.).
+
+![Vault creation transactions on Polygon](https://polygonscan.com/tx/0x2029158aef3beb3b2f383cddbaa5d95fda14b007bc86550228138bc28c68c446)
+
+The only whitelisted address is the deployer / tipster account:
+```
+0xe257cf8ECa1aF94117bEe3809F705bC6e51CbD5c
+```
+[View on PolygonScan](https://polygonscan.com/address/0xe257cf8ECa1aF94117bEe3809F705bC6e51CbD5c)
+
+This address has:
+- Created **multiple vaults** on ThetaSingleton (tx: `0x2029158a...`, `0x3355387d...`, `0x17c8adcb...`, `0x0f081d8f...`)
+- Deposited into vaults (tx: `0x74484c66...`, `0xeabaaae5...`)
+- Approved USDT0 for vault betting (tx: `0x91fd5868...`, `0xd6dd46ad...`)
+
+Only the deployer (`0xDD7D64BFd13EF3b733374Fc8DE9B9C651487a15D`) can add or remove whitelisted addresses via `whitelistAddress()` / `removeWhitelistAddress()`. Anyone else calling `createVault()` or `placeBet()` will get `NotWhitelisted()`.
+
+This is a deliberate safety mechanism — the whitelist will be opened when the protocol is ready for public access.
 
 ### TipsterVault (`contracts/src/TipsterVault.sol`)
 
@@ -239,32 +259,28 @@ The REST API (Hono) exposes GraphQL for the mobile app to query vault rankings, 
 
 ---
 
-## Live Deployments
+## Live Deployment
 
 ### Polygon Mainnet
 
 | Contract | Address | Explorer |
 |----------|---------|----------|
-| ThetaSingleton | `0x2d2339cd24f68324ce9df36b1d9c1da9961d35a1` | [PolygonScan](https://polygonscan.com/address/0x2d2339cd24f68324ce9df36b1d9c1da9961d35a1) |
+| **ThetaSingleton** | `0x2d2339cd24f68324ce9df36b1d9c1da9961d35a1` | [PolygonScan](https://polygonscan.com/address/0x2d2339cd24f68324ce9df36b1d9c1da9961d35a1) |
+| TipsterVault #1 | `0x30027a00c50e2DeF0A2290fA8de34a3610F6668d` | [PolygonScan](https://polygonscan.com/address/0x30027a00c50e2DeF0A2290fA8de34a3610F6668d) |
+| TipsterVault #2 | `0xDc57a5175cb7eb190Be704C79719D263BC64aF56` | [PolygonScan](https://polygonscan.com/address/0xDc57a5175cb7eb190Be704C79719D263BC64aF56) |
+| TipsterVault #3 | `0x2fDA0bEC495E34Dc1cAd74B508bE2DcDa4D38a3a` | [PolygonScan](https://polygonscan.com/address/0x2fDA0bEC495E34Dc1cAd74B508bE2DcDa4D38a3a) |
+| TipsterVault #4 | `0x0cb216E3b9c9D50C8C681f06151b61cAb6151f6` | [PolygonScan](https://polygonscan.com/address/0x0cb216E3b9c9D50C8C681f06151b61cAb6151f6) |
+| TipsterVault #5 | `0x427ECC13F4Ed01b0f82867A98074d3aB26f541D` | [PolygonScan](https://polygonscan.com/address/0x427ECC13F4Ed01b0f82867A98074d3aB26f541D) |
+| TipsterVault #6 | `0xf8F0671b5F8a8bcCA5b2962A6D3b30Cb2962A6D3` | [PolygonScan](https://polygonscan.com/address/0xf8F0671b5F8a8bcCA5b2962A6D3b30Cb2962A6D3) |
+| TipsterVault #7 | `0x2964702d519940dEAb350CbBCC20F250189d1ed` | [PolygonScan](https://polygonscan.com/address/0x2964702d519940dEAb350CbBCC20F250189d1ed) |
 | Bet Token (USDT) | `0xc2132D05D31c914a87C6611C10748AEb04B58e8F` | — |
 | Azuro LP | `0x0FA7FB5407eA971694652E6E16C12A52625DE1b8` | — |
 | Azuro Core | `0xF9548Be470A4e130c90ceA8b179FCD66D2972AC7` | — |
 | Azuro Relayer | `0x8dA05c0021e6b35865FDC959c54dCeF3A4AbBa9d` | — |
-| Deployer | `0xDD7D64BFd13EF3b733374Fc8DE9B9C651487a15D` | — |
+| **Deployer** | `0xDD7D64BFd13EF3b733374Fc8DE9B9C651487a15D` | [PolygonScan](https://polygonscan.com/address/0xDD7D64BFd13EF3b733374Fc8DE9B9C651487a15D) |
+| **Whitelisted user** | `0xe257cf8ECa1aF94117bEe3809F705bC6e51CbD5c` | [PolygonScan](https://polygonscan.com/address/0xe257cf8ECa1aF94117bEe3809F705bC6e51CbD5c) |
 
-Indexer start block: **89,896,604**.
-
-### Polygon Amoy (Testnet)
-
-| Contract | Address | Explorer |
-|----------|---------|----------|
-| ThetaSingleton | `0x54e0c63678e21bdd24df135cc27f6ecbfc99e69c` | [AmoyScan](https://amoy.polygonscan.com/address/0x54e0c63678e21bdd24df135cc27f6ecbfc99e69c) |
-| Bet Token | `0xCf1b86ceD971b88C042C64A9c099377e2738073C` | — |
-| Azuro LP | `0x0a75395Ff15d9557424b632cEBCac448D66F9779` | — |
-| Azuro Core | `0xCD0Db5ef28C3Bd3a69283372dE923Eb4DA0585F6` | — |
-| Azuro Relayer | `0x48c9bE88706F22838070eE7C4bC74Ad7A8eeF114` | — |
-
-Indexer start block: **41,550,782**.
+**Ponder indexer start block:** 89,896,604
 
 ---
 
@@ -283,7 +299,7 @@ thetabet/
 │       │   ├── components/              # UI: bet slip, odds badges, event cards, AI sheet
 │       │   ├── config/                  # Contract addresses, Azuro config, chain params
 │       │   ├── context/                 # React context: app mode, confirm sheet, wallet
-│       │   ├── hooks/                   # useWalletPortfolio, useAzuroEvent, useProfileVaults
+│       │   ├── hooks/                   # Custom hooks
 │       │   ├── services/                # Business logic
 │       │   │   ├── azuro/               # Bet placement, feed, vault-bet-api, onchain-feed
 │       │   │   ├── qvac/               # QVAC client, model manager, settings, web research
@@ -291,66 +307,27 @@ thetabet/
 │       │   ├── types/                   # Shared TypeScript types
 │       │   └── utils/                   # Error formatting, number helpers
 │       ├── pear-end/                    # P2P chat Bare worklet
-│       │   ├── index.mjs               # RPC handler entry point
-│       │   ├── chat.mjs                # PearChat class: channels, swarm, corestore
-│       │   ├── dm.mjs                  # DM protocol: contacts, E2E encryption, handle discovery
-│       │   ├── crypto.mjs              # Ed25519 key exchange, encrypt/decrypt, sign/verify
-│       │   ├── identity.mjs            # Key generation + persistence
-│       │   ├── socket-framer.mjs       # JSON frame protocol over hyperswarm sockets
-│       │   └── commands.mjs            # RPC command constants
-│       ├── qvac/                       # QVAC AI worker bundle
-│       │   ├── worker.entry.mjs       # QVAC worker entry (no plugins, for download)
-│       │   ├── worker.bundle.js       # Generated: no-plugins bundle
-│       │   ├── worker.full.bundle.js  # Generated: with LLM plugin for inference
-│       │   └── addons.manifest.json   # Native addon manifest
-│       ├── plugins/                    # Expo config plugins
-│       │   ├── withAndroidNdk27.js     # Pin NDK 27 for QVAC compatibility
-│       │   └── withAndroidCleartextLocalhost.js  # Allow cleartext to localhost for dev
-│       ├── scripts/                    # Build + dev tooling
-│       │   ├── bundle-pear.mjs        # bare-pack pear-end worklet
-│       │   ├── bundle-qvac.mjs        # QVAC worker bundler
-│       │   ├── generate-imports.mjs   # Generate pack.imports.json for pear-end
-│       │   ├── patch-bare-kit-link.mjs # Patch react-native-bare-kit's linker
-│       │   ├── link-bare-addons.mjs    # Link native addons for Bare worklet
-│       │   └── open-android.mjs       # adb reverse + dev-client deep link
-│       └── app.json                   # Expo config
-├── contracts/                          # Foundry project
+│       ├── qvac/                        # QVAC AI worker bundle
+│       ├── plugins/                     # Expo config plugins
+│       └── scripts/                     # Build + dev tooling
+├── contracts/                           # Foundry project
 │   ├── src/
-│   │   ├── ThetaSingleton.sol         # Master contract
-│   │   ├── TipsterVault.sol           # ERC-4626 share token
-│   │   ├── config/
-│   │   │   ├── AmoyConfig.sol         # Amoy Azuro addresses
-│   │   │   └── PolygonConfig.sol      # Polygon Azuro addresses
-│   │   └── interfaces/
-│   │       ├── IAzuroLP.sol           # Azuro LP interface
-│   │       ├── IAzuroCore.sol         # Azuro Core interface
-│   │       └── IERC1271.sol           # ERC-1271 signature validation
-│   ├── test/
-│   │   ├── Singleton.t.sol            # ThetaSingleton unit tests
-│   │   ├── Vault.t.sol                # TipsterVault unit tests
-│   │   └── AzuroIntegration.t.sol     # Amoy fork integration tests
-│   └── script/
-│       ├── DeployPolygon.s.sol        # Mainnet deploy script
-│       ├── DeployAmoy.s.sol           # Amoy testnet deploy script
-│       ├── DeployAnvil.s.sol          # Local Anvil deploy script
-│       └── *.sh                       # Shell wrappers for deploy flows
-├── ponder/                             # Ponder indexer
+│   │   ├── ThetaSingleton.sol          # Master contract
+│   │   ├── TipsterVault.sol            # ERC-4626 share token
+│   │   ├── config/PolygonConfig.sol    # Polygon Azuro addresses
+│   │   └── interfaces/                 # IAzuroLP, IAzuroCore, IERC1271
+│   ├── test/                           # Singleton.t.sol, Vault.t.sol, AzuroIntegration.t.sol
+│   └── script/                         # DeployPolygon.s.sol, DeployAnvil.s.sol
+├── ponder/                              # Ponder indexer
 │   ├── src/
-│   │   ├── index.ts                   # Event handlers (VaultCreated, VaultMetrics, etc.)
-│   │   └── api/index.ts              # GraphQL API (Hono)
-│   ├── ponder.schema.ts               # Database schema
-│   ├── abis/                          # Generated ABIs
-│   └── deployments/                   # Deployment addresses per network
-│       ├── polygon.json
-│       ├── amoy.json
-│       └── anvil.json
+│   │   ├── index.ts                    # Event handlers
+│   │   └── api/index.ts               # GraphQL API (Hono)
+│   ├── ponder.schema.ts                # Database schema
+│   └── deployments/                    # polygon.json, anvil.json
 └── tools/
-    ├── dev-stack.sh                   # Local dev stack (Anvil + Ponder + Cloudflare tunnel)
-    ├── peer/                          # WSL Node peer for single-device P2P testing
-    ├── scripts/
-    │   ├── sync-deployment.mjs        # Sync deployment to app config
-    │   └── ...
-    └── ...
+    ├── dev-stack.sh                    # Dev stack: Anvil + Ponder + Cloudflare tunnel
+    ├── peer/                           # WSL Node peer for single-device P2P testing
+    └── scripts/
 ```
 
 ---
@@ -363,60 +340,46 @@ thetabet/
 |-----------|---------|-------|
 | Node.js | >= 20 | Tested with 20.x and 22.x |
 | pnpm | >= 9 | `npm install -g pnpm` |
-| Foundry | nightly | `curl -L https://foundry.paradigm.xyz | bash && foundryup` |
+| Foundry | nightly | `curl -L https://foundry.paradigm.xyz \| bash && foundryup` |
 | Java | >= 17, <= 21 | Required by Android Gradle plugin |
 | Android SDK | 36 + Build Tools 36.0.0 | Set `ANDROID_HOME` |
 | Android NDK | 27.1.12297006 | Installed via SDK Manager |
 | ADB | latest | In platform-tools from Android SDK |
 | bash | >= 4.x | macOS: `brew install bash` (default is 3.2) |
-| cloudflared | latest | Optional — only for tunnel mode (`brew install cloudflared`) |
+| cloudflared | **Required** | `brew install cloudflared` (macOS) / `apt install cloudflared` (Linux/WSL) |
 
-### macOS Quick Setup
+### macOS
 
 ```bash
-# Homebrew dependencies
 brew install bash node pnpm cloudflared
-
-# Install Foundry
 curl -L https://foundry.paradigm.xyz | bash
 foundryup
-
-# Clone + install
 git clone https://github.com/SolidityDrone/thetabet.git
 cd thetabet
 pnpm install
 ```
 
-### Linux / WSL2 Quick Setup
+### Linux / WSL2
 
 ```bash
-# Node (using nvm recommended)
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash
 nvm install 20
-
-# pnpm
 corepack enable && corepack prepare pnpm@latest --activate
-
-# Foundry
 curl -L https://foundry.paradigm.xyz | bash
 foundryup
-
-# Clone + install
+sudo apt install cloudflared
 git clone https://github.com/SolidityDrone/thetabet.git
 cd thetabet
 pnpm install
 ```
 
-### Android SDK Setup
-
-You need the Android SDK with specific versions. Install via Android Studio's SDK Manager (or `sdkmanager` CLI):
+### Android SDK
 
 ```bash
-# Set ANDROID_HOME (add to ~/.bashrc / ~/.zshrc)
 export ANDROID_HOME=$HOME/Android/Sdk   # Linux
+# or
 export ANDROID_HOME=$HOME/Library/Android/sdk  # macOS
 
-# Install required SDK + NDK
 $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
   "platforms;android-36" \
   "build-tools;36.0.0" \
@@ -424,7 +387,7 @@ $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
   "platform-tools"
 ```
 
-### Build the Mobile App
+### Build and Run the Mobile App
 
 ```bash
 cd apps/mobile
@@ -432,37 +395,40 @@ cd apps/mobile
 # 1. Generate the Pear-end P2P worklet bundle
 pnpm bundle:pear
 
-# 2. Generate the QVAC AI worker bundle (takes ~30s)
+# 2. Generate the QVAC AI worker bundle (~30s)
 pnpm bundle:qvac
 
-# 3. (First time only) Build native Android app and install on device
-#    This runs Gradle — takes 5-15min first time, cached afterward.
+# 3. (First time only) Build native Android app + install on device
+#    Gradle — takes 5-15 min first time, cached afterward.
 pnpm android
 
-# 4. Start Metro bundler
-pnpm start
+# 4. Start Metro bundler with cache clear
+npm run start:clean
 
-# 5. Bridge device to Metro (different terminal)
+# 5. (Different terminal) Bridge device to Metro
 adb reverse tcp:8081 tcp:8081
 ```
 
-The app should now be running on your Android device via Expo dev client.
+The dev-client app opens on your Android device and connects to Metro over USB. JS changes hot-reload instantly.
 
 ### Run the Ponder Indexer
 
+The indexer connects to Polygon mainnet, indexes ThetaSingleton events, and exposes a GraphQL API consumed by the mobile app. The physical device reaches it via a **Cloudflare tunnel**:
+
 ```bash
-# Option A: Local stack (Anvil fork + Ponder)
-pnpm dev:stack
-
-# Option B: With Cloudflare tunnel (so the physical device can reach Ponder)
-pnpm dev:stack:tunnel
-
-# Option C: Standalone Ponder on Polygon mainnet (no tunnel)
-cd ponder
-PONDER_NETWORK=polygon npm run dev
+# Start Ponder + Cloudflare tunnel (the only supported mode)
+USE_TUNNEL=1 pnpm dev:stack:tunnel
 ```
 
-When using `dev:stack:tunnel`, the script auto-generates `apps/mobile/src/config/tunnel.generated.ts` with the tunnel URL. The mobile app reads this URL to query the indexer.
+What happens:
+1. Ponder starts at `http://localhost:42069` and begins indexing from block 89,896,604.
+2. `cloudflared` creates a public `.trycloudflare.com` tunnel URL pointing to localhost.
+3. The tunnel URL is written to `apps/mobile/src/config/tunnel.generated.ts` and synced into the app's config.
+4. The mobile app reads this URL and queries the indexer through Cloudflare, even when the device is on mobile data.
+
+**`cloudflared` is mandatory** — the indexer is not publicly accessible otherwise. Install it before running the dev stack.
+
+Each tunnel run generates a fresh URL. After it starts, reload the mobile app to pick up the new endpoint.
 
 ### Deploy Contracts
 
@@ -471,84 +437,61 @@ When using `dev:stack:tunnel`, the script auto-generates `apps/mobile/src/config
 pnpm contracts:anvil-fork
 pnpm contracts:anvil-deploy
 
-# Polygon Amoy testnet (requires test MATIC + keystore)
-pnpm contracts:deploy-amoy
-
 # Polygon mainnet (requires real POL + keystore)
 pnpm contracts:deploy-polygon
 ```
 
+**Whitelist note:** After deploying a new ThetaSingleton, the deployer must whitelist addresses manually:
+
+```solidity
+// Only callable by deployer (0xDD7D64...)
+singleton.whitelistAddress(0xe257cf8ECa1aF94117bEe3809F705bC6e51CbD5c);
+```
+
+Without whitelisting, every user-facing call (`createVault`, `deposit`, `placeBet`, etc.) reverts with `NotWhitelisted()`.
+
 ### Deployer Setup
 
-To deploy on mainnet/Amoy, you need a Foundry keystore:
-
 ```bash
-# Create keystore
 cast wallet import kondor --private-key <your-private-key>
-
-# Deploy (prompts for keystore password)
 pnpm contracts:deploy-polygon
-
-# Or set password env var for scripting
-FOUNDRY_PASSWORD=yourpass pnpm contracts:deploy-polygon
 ```
 
 ---
 
-## Cloudflare Tunnel
-
-The indexer can be made accessible to a physical Android device on a different network via a Cloudflare tunnel:
+## Cloudflare Tunnel (Required for Ponder)
 
 ```
-Device (4G/5G) ──► Cloudflare ──► cloudflared (dev machine) ──► Ponder (localhost:42069)
+Device (4G/5G) ──► Cloudflare ──► cloudflared ──► Ponder (localhost:42069)
 ```
 
-**Prerequisite:** Install `cloudflared`:
 ```bash
-# macOS
-brew install cloudflared
+# Install cloudflared
+macOS:   brew install cloudflared
+Linux:   curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared
+WSL2:    sudo apt install cloudflared
 
-# Linux
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
-chmod +x /usr/local/bin/cloudflared
-
-# Windows (in WSL2)
-sudo apt install cloudflared
-```
-
-**Usage:**
-```bash
+# Run
 USE_TUNNEL=1 pnpm dev:stack:tunnel
 ```
 
-The script:
-1. Starts Ponder on `localhost:42069`.
-2. Starts `cloudflared tunnel --url http://127.0.0.1:42069`.
-3. Parses the `.trycloudflare.com` URL from tunnel logs.
-4. Writes it to `apps/mobile/src/config/tunnel.generated.ts`.
-5. Syncs the tunnel URL into `contracts.generated.ts` as the fallback `PONDER_GRAPHQL_URL`.
-
-Each tunnel run gets a new URL. After the tunnel starts, reload the mobile app to pick up the new URL.
-
-Without a tunnel, the mobile app queries the indexer at `http://127.0.0.1:42069/graphql` — which works when the device is on the same network (USB `adb reverse tcp:42069 tcp:42069` or LAN).
+The tunnel is the bridge between your device (on any network) and your local Ponder instance. Without it, the mobile app cannot query the indexer remotely.
 
 ---
 
 ## P2P Testing Without a Second Phone
 
-Run a Node.js peer on your development machine:
-
 ```bash
 pnpm peer -- --topic <hex-topic-key> --name "Dev peer"
 ```
 
-This starts a Bare-compatible Node process that joins the same Hyperswarm topic as the phone. You can exchange messages, test DMs, and validate channel persistence — all with a single Android device.
+Starts a Bare-compatible Node process that joins the same Hyperswarm topic as the phone — message exchange, DM testing, and channel persistence validation with a single Android device.
 
 ---
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and configure:
+Copy `.env.example` → `.env`:
 
 ```bash
 cp apps/mobile/.env.example apps/mobile/.env
@@ -556,47 +499,37 @@ cp apps/mobile/.env.example apps/mobile/.env
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
-| `EXPO_PUBLIC_PONDER_URL` | No | Auto-generated | Ponder GraphQL URL (overrides tunnel) |
-| `EXPO_PUBLIC_PONDER_USE_LOCAL` | No | — | Set to `1` to force `http://127.0.0.1:42069/graphql` |
+| `EXPO_PUBLIC_PONDER_URL` | No | Auto-generated tunnel URL | Ponder GraphQL endpoint (overrides tunnel) |
+| `EXPO_PUBLIC_PONDER_USE_LOCAL` | No | — | Set `1` to force `http://127.0.0.1:42069/graphql` |
 | `EXPO_PUBLIC_WDK_INDEXER_BASE_URL` | Yes | `https://wdk-api.tether.io` | WDK indexer for transaction history |
-| `EXPO_PUBLIC_WDK_INDEXER_API_KEY` | Yes* | — | WDK API key (empty = limited functionality) |
+| `EXPO_PUBLIC_WDK_INDEXER_API_KEY` | Yes* | — | WDK API key for transaction history |
 | `EXPO_PUBLIC_THESPORTSDB_API_KEY` | No | `3` | League/team logos (free test key) |
 | `EXPO_PUBLIC_API_FOOTBALL_KEY` | No | — | Live match data from api-sports.io |
 
-\* WDK indexer API key is required for transaction history. The wallet works without it (send/receive still functional via direct RPC).
+\* Without a WDK API key, the wallet still works (send/receive via direct RPC) but transaction history is unavailable.
 
 ---
 
 ## Portability Notes
 
-This project was developed on **WSL2 (Ubuntu on Windows)** with a physical Android device. It has been audited and is known to build on:
+| Platform | Status |
+|----------|--------|
+| **WSL2 / Ubuntu** | ✅ Primary development environment |
+| **Native Linux** | ✅ Verified |
+| **macOS** | ✅ Requires `brew install bash` (default macOS bash 3.2 doesn't support `pipefail`) |
+| **Windows (native)** | ⚠️ Not tested — WSL2 recommended |
 
-- **WSL2 / Ubuntu** ✅ (primary development environment)
-- **Native Linux** ✅ (tested, no WSL-specific dependencies remain)
-- **macOS** ✅ (requires `brew install bash` for bash 4+)
-- **Windows (native)** ⚠️ (not tested — WSL2 recommended)
+### Portability fixes applied
 
-### Verified Portability Fixes
-
-The following issues were identified and fixed during the audit:
-
-| Issue | Fix |
-|-------|-----|
-| `pack.imports.json` had absolute paths locked to dev machine | Regenerated dynamically by `pnpm bundle:pear`; removed from git tracking |
-| `tunnel.generated.ts` had stale Cloudflare URL | Removed from git tracking; regenerated per-session |
-| `dev-stack.sh` hardcoded `$HOME/.nvm/versions/node/v20.19.2` | Now uses PATH + NVM fallback |
-| `package.json` hardcoded `v20.19.2` in ponder:dev script | Removed — uses system Node |
-| `deploy-polygon.sh` used `${var,,}` (bash 4+ only) | Replaced with portable `tr` command |
-| `dev-stack.sh` used `seq` (not on macOS by default) | Replaced with portable loop syntax |
-
-### Known macOS-Only Requirement
-
-Default macOS bash is version 3.2 (2007). The deploy scripts use `set -euo pipefail` which requires bash 4+. Install a modern bash:
-
-```bash
-brew install bash
-# The shebang #!/usr/bin/env bash will pick up Homebrew's bash
-```
+| Original issue | Fix |
+|----------------|-----|
+| `pack.imports.json` had absolute paths locked to `/home/drone/projects/...` | Regenerated dynamically by `pnpm bundle:pear`; removed from git |
+| `tunnel.generated.ts` had stale Cloudflare tunnel URL | Removed from git; regenerated per-session |
+| `dev-stack.sh` hardcoded `$HOME/.nvm/versions/node/v20.19.2` | Uses system PATH with NVM fallback |
+| `package.json` hardcoded `v20.19.2` in `ponder:dev` script | Removed — uses system Node |
+| `deploy-polygon.sh` used `${var,,}` (bash 4+ only) | Replaced with portable `tr` |
+| `dev-stack.sh` used `seq` (not on macOS) | Replaced with portable loop syntax |
+| `generate-imports.mjs` missing `sodium-universal` and `bare-kit` | Added missing module mappings |
 
 ---
 

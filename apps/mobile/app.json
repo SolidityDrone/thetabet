@@ -7,16 +7,6 @@
     "icon": "./assets/images/icon-square.png",
     "scheme": "thetabet",
     "newArchEnabled": true,
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "io.thetabet.app",
-      "infoPlist": {
-        "UIStatusBarStyle": "UIStatusBarStyleLightContent",
-        "UIViewControllerBasedStatusBarAppearance": false,
-        "NSFaceIDUsageDescription": "This app uses Face ID to secure your wallet and authenticate transactions.",
-        "ITSAppUsesNonExemptEncryption": false
-      }
-    },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#000000",

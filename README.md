@@ -99,7 +99,7 @@ ThetaBet's chat is not a bolt-on — it is the primary user interface, deeply in
 
 ```
                           ┌──────────────────────────────────────────────────────────┐
-                          │               Expo React Native App (Android)            │
+               │              Expo React Native App               │
                           │                                                          │
                           │  ┌──────────────────────────────────────────────────┐   │
                           │  │             RN UI Layer (Hermes)                 │   │
@@ -181,9 +181,8 @@ The only whitelisted address is the deployer / tipster account:
 [View on PolygonScan](https://polygonscan.com/address/0xe257cf8ECa1aF94117bEe3809F705bC6e51CbD5c)
 
 This address has:
-- Created **multiple vaults** on ThetaSingleton (tx: `0x2029158a...`, `0x3355387d...`, `0x17c8adcb...`, `0x0f081d8f...`)
-- Deposited into vaults (tx: `0x74484c66...`, `0xeabaaae5...`)
-- Approved USDT0 for vault betting (tx: `0x91fd5868...`, `0xd6dd46ad...`)
+- Created the "Pips" vault on the latest singleton (tx: [`0x2029158a...`](https://polygonscan.com/tx/0x2029158aef3beb3b2f383cddbaa5d95fda14b007bc86550228138bc28c68c446))
+- Registered the tipster handle `pips` (tx: [`0xf641285a...`](https://polygonscan.com/tx/0xf641285a1e4cf9e87b90c1e666983c248bb96f214605468a632bf2122594d960))
 
 Only the deployer (`0xDD7D64BFd13EF3b733374Fc8DE9B9C651487a15D`) can add or remove whitelisted addresses via `whitelistAddress()` / `removeWhitelistAddress()`. Anyone else calling `createVault()` or `placeBet()` will get `NotWhitelisted()`.
 
@@ -266,13 +265,7 @@ The REST API (Hono) exposes GraphQL for the mobile app to query vault rankings, 
 | Contract | Address | Explorer |
 |----------|---------|----------|
 | **ThetaSingleton** | `0x2d2339cd24f68324ce9df36b1d9c1da9961d35a1` | [PolygonScan](https://polygonscan.com/address/0x2d2339cd24f68324ce9df36b1d9c1da9961d35a1) |
-| TipsterVault #1 | `0x30027a00c50e2DeF0A2290fA8de34a3610F6668d` | [PolygonScan](https://polygonscan.com/address/0x30027a00c50e2DeF0A2290fA8de34a3610F6668d) |
-| TipsterVault #2 | `0xDc57a5175cb7eb190Be704C79719D263BC64aF56` | [PolygonScan](https://polygonscan.com/address/0xDc57a5175cb7eb190Be704C79719D263BC64aF56) |
-| TipsterVault #3 | `0x2fDA0bEC495E34Dc1cAd74B508bE2DcDa4D38a3a` | [PolygonScan](https://polygonscan.com/address/0x2fDA0bEC495E34Dc1cAd74B508bE2DcDa4D38a3a) |
-| TipsterVault #4 | `0x0cb216E3b9c9D50C8C681f06151b61cAb6151f6` | [PolygonScan](https://polygonscan.com/address/0x0cb216E3b9c9D50C8C681f06151b61cAb6151f6) |
-| TipsterVault #5 | `0x427ECC13F4Ed01b0f82867A98074d3aB26f541D` | [PolygonScan](https://polygonscan.com/address/0x427ECC13F4Ed01b0f82867A98074d3aB26f541D) |
-| TipsterVault #6 | `0xf8F0671b5F8a8bcCA5b2962A6D3b30Cb2962A6D3` | [PolygonScan](https://polygonscan.com/address/0xf8F0671b5F8a8bcCA5b2962A6D3b30Cb2962A6D3) |
-| TipsterVault #7 | `0x2964702d519940dEAb350CbBCC20F250189d1ed` | [PolygonScan](https://polygonscan.com/address/0x2964702d519940dEAb350CbBCC20F250189d1ed) |
+| **TipsterVault (Pips)** | `0x2964702d519940dEAb350CbBCC20F250189d1ed` | [PolygonScan](https://polygonscan.com/address/0x2964702d519940dEAb350CbBCC20F250189d1ed) |
 | Bet Token (USDT) | `0xc2132D05D31c914a87C6611C10748AEb04B58e8F` | — |
 | Azuro LP | `0x0FA7FB5407eA971694652E6E16C12A52625DE1b8` | — |
 | Azuro Core | `0xF9548Be470A4e130c90ceA8b179FCD66D2972AC7` | — |
@@ -289,7 +282,7 @@ The REST API (Hono) exposes GraphQL for the mobile app to query vault rankings, 
 ```
 thetabet/
 ├── apps/
-│   └── mobile/                          # Expo React Native app (Android)
+│   └── mobile/                          # Expo React Native app
 │       ├── src/
 │       │   ├── app/                     # Expo Router screens
 │       │   │   ├── (tabs)/              # Tab navigator: channels, wallet, vaults, profile
@@ -367,19 +360,41 @@ nvm install 20
 corepack enable && corepack prepare pnpm@latest --activate
 curl -L https://foundry.paradigm.xyz | bash
 foundryup
-sudo apt install cloudflared
+sudo apt update && sudo apt install cloudflared openjdk-21-jdk
 git clone https://github.com/SolidityDrone/thetabet.git
 cd thetabet
 pnpm install
 ```
 
+
+
 ### Android SDK
 
-```bash
-export ANDROID_HOME=$HOME/Android/Sdk   # Linux
-# or
-export ANDROID_HOME=$HOME/Library/Android/sdk  # macOS
+**Linux / WSL2:**
 
+```bash
+# Install cmdline-tools if not already present
+mkdir -p $HOME/Android/Sdk
+cd $HOME/Android/Sdk
+curl -o cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip
+unzip -q cmdline-tools.zip && rm cmdline-tools.zip
+mv cmdline-tools latest  # rename for sdkmanager path
+mkdir -p cmdline-tools && mv latest cmdline-tools/
+
+export ANDROID_HOME=$HOME/Android/Sdk
+$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+  "platforms;android-36" \
+  "build-tools;36.0.0" \
+  "ndk;27.1.12297006" \
+  "platform-tools"
+echo 'export ANDROID_HOME=$HOME/Android/Sdk' >> ~/.bashrc
+echo 'export PATH=$PATH:$ANDROID_HOME/platform-tools' >> ~/.bashrc
+```
+
+**macOS:**
+
+```bash
+export ANDROID_HOME=$HOME/Library/Android/sdk
 $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
   "platforms;android-36" \
   "build-tools;36.0.0" \
@@ -403,7 +418,7 @@ pnpm bundle:qvac
 pnpm android
 
 # 4. Start Metro bundler with cache clear
-npm run start:clean
+pnpm start:clean
 
 # 5. (Different terminal) Bridge device to Metro
 adb reverse tcp:8081 tcp:8081

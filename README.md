@@ -172,17 +172,13 @@ The master contract (single instance on Polygon mainnet). Responsibilities:
 
 **The ThetaSingleton contract is whitelist-gated.** Because Azuro Protocol has no viable testnet market (Azuro Amoy lacked liquidity), the contract was deployed directly on Polygon mainnet. To prevent unauthorized access to a mainnet contract, only whitelisted addresses can call user-facing entry points (`createVault`, `deposit`, `placeBet`, `prepareVaultBet`, etc.).
 
-![Vault creation transactions on Polygon](https://polygonscan.com/tx/0x2029158aef3beb3b2f383cddbaa5d95fda14b007bc86550228138bc28c68c446)
-
 The only whitelisted address is the deployer / tipster account:
 ```
 0xe257cf8ECa1aF94117bEe3809F705bC6e51CbD5c
 ```
 [View on PolygonScan](https://polygonscan.com/address/0xe257cf8ECa1aF94117bEe3809F705bC6e51CbD5c)
 
-This address has:
-- Created the "Pips" vault on the latest singleton (tx: [`0x2029158a...`](https://polygonscan.com/tx/0x2029158aef3beb3b2f383cddbaa5d95fda14b007bc86550228138bc28c68c446))
-- Registered the tipster handle `pips` (tx: [`0xf641285a...`](https://polygonscan.com/tx/0xf641285a1e4cf9e87b90c1e666983c248bb96f214605468a632bf2122594d960))
+This address signed the bets shown in the demo video.
 
 Only the deployer (`0xDD7D64BFd13EF3b733374Fc8DE9B9C651487a15D`) can add or remove whitelisted addresses via `whitelistAddress()` / `removeWhitelistAddress()`. Anyone else calling `createVault()` or `placeBet()` will get `NotWhitelisted()`.
 
@@ -260,20 +256,9 @@ The REST API (Hono) exposes GraphQL for the mobile app to query vault rankings, 
 
 ## Live Deployment
 
-### Polygon Mainnet
-
-| Contract | Address | Explorer |
-|----------|---------|----------|
-| **ThetaSingleton** | `0x2d2339cd24f68324ce9df36b1d9c1da9961d35a1` | [PolygonScan](https://polygonscan.com/address/0x2d2339cd24f68324ce9df36b1d9c1da9961d35a1) |
-| **TipsterVault (Pips)** | `0x2964702d519940dEAb350CbBCC20F250189d1ed` | [PolygonScan](https://polygonscan.com/address/0x2964702d519940dEAb350CbBCC20F250189d1ed) |
-| Bet Token (USDT) | `0xc2132D05D31c914a87C6611C10748AEb04B58e8F` | — |
-| Azuro LP | `0x0FA7FB5407eA971694652E6E16C12A52625DE1b8` | — |
-| Azuro Core | `0xF9548Be470A4e130c90ceA8b179FCD66D2972AC7` | — |
-| Azuro Relayer | `0x8dA05c0021e6b35865FDC959c54dCeF3A4AbBa9d` | — |
-| **Deployer** | `0xDD7D64BFd13EF3b733374Fc8DE9B9C651487a15D` | [PolygonScan](https://polygonscan.com/address/0xDD7D64BFd13EF3b733374Fc8DE9B9C651487a15D) |
-| **Whitelisted user** | `0xe257cf8ECa1aF94117bEe3809F705bC6e51CbD5c` | [PolygonScan](https://polygonscan.com/address/0xe257cf8ECa1aF94117bEe3809F705bC6e51CbD5c) |
-
-**Ponder indexer start block:** 89,896,604
+- **ThetaSingleton:** [`0x2D2339Cd...`](https://polygonscan.com/address/0x2d2339cd24f68324ce9df36b1d9c1da9961d35a1) — single master contract on Polygon mainnet
+- **Demo bet shown in video:** [tx `0x9b98da17...`](https://polygonscan.com/tx/0x9b98da175a2379dc36dfe1984a28dd3af41c30ef43680ed8daef48ac462a61cb) — direct bet on Azuro V3
+- **Ponder start block:** 89,896,604
 
 ---
 

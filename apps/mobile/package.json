@@ -11,7 +11,7 @@
     "ios": "expo run:ios",
     "prebuild": "expo prebuild",
     "prebuild:clean": "expo prebuild --clean",
-    "bundle:pear": "bare-pack --target android-arm64 --target android-x64 --linked --format bundle.cjs --out pear-end.bundle.js pear-end/index.mjs",
+    "bundle:pear": "node scripts/generate-imports.mjs && bare-pack --target android-arm64 --target android-x64 --linked --format bundle.cjs --out pear-end.bundle.js pear-end/index.mjs",
     "bundle:qvac": "node scripts/bundle-qvac.mjs",
     "open:android": "node scripts/open-android.mjs",
     "test:azuro-api": "node scripts/test-azuro-api.mjs",

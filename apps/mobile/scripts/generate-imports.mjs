@@ -13,7 +13,9 @@ const imports = {
   corestore: path.join(root, 'node_modules', 'corestore'),
   hyperswarm: path.join(root, 'node_modules', 'hyperswarm'),
   'hypercore-crypto': path.join(root, 'node_modules', 'hypercore-crypto'),
+  'sodium-universal': path.join(root, 'node_modules', 'sodium-universal'),
   'bare-rpc': path.join(root, 'node_modules', 'bare-rpc'),
+  'bare-kit': path.join(root, 'node_modules', 'bare-kit'),
 }
 
 fs.writeFileSync(outPath, JSON.stringify(imports, null, 2))

@@ -8,7 +8,7 @@
     "mobile:android": "npm --prefix apps/mobile run android",
     "mobile:prebuild": "npm --prefix apps/mobile run prebuild:clean -- --platform android",
     "peer": "pnpm --filter @thetabet/peer start",
-    "ponder:dev": "bash -lc 'export PATH=\"$HOME/.nvm/versions/node/v20.19.2/bin:$PATH\"; cd ponder && PONDER_NETWORK=polygon npm run dev'",
+    "ponder:dev": "cd ponder && PONDER_NETWORK=polygon npm run dev",
     "contracts:deploy-anvil": "bash contracts/script/deploy-anvil.sh",
     "contracts:anvil-fork": "bash contracts/script/start-anvil-fork.sh",
     "contracts:anvil-deploy": "bash contracts/script/deploy-anvil.sh",

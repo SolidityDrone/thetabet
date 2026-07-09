@@ -24,7 +24,7 @@ if (!fs.existsSync(deploymentFile)) {
 const deployment = JSON.parse(fs.readFileSync(deploymentFile, 'utf8'))
 
 const tunnelFile = path.join(repoRoot, 'apps/mobile/src/config/tunnel.generated.ts')
-let ponderUrl = 'http://localhost:42069/graphql'
+let ponderUrl = 'http://127.0.0.1:42069/graphql'
 if (fs.existsSync(tunnelFile)) {
   const tunnelSrc = fs.readFileSync(tunnelFile, 'utf8')
   const match = tunnelSrc.match(/PONDER_TUNNEL_URL\s*=\s*'([^']+)'/)
@@ -32,6 +32,9 @@ if (fs.existsSync(tunnelFile)) {
     ponderUrl = match[1].endsWith('/graphql') ? match[1] : `${match[1].replace(/\/$/, '')}/graphql`
   }
 }
+
+// For tunnel mode, also set as runtime env fallback
+process.env.EXPO_PUBLIC_PONDER_URL = ponderUrl
 
 const checksum = (address) => {
   if (!address || typeof address !== 'string') return address

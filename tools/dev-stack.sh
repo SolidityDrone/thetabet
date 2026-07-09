@@ -5,12 +5,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Ponder 0.16.x requires Node >= 20.
-if [ -f "$HOME/.nvm/nvm.sh" ]; then
+# Try NVM if available, otherwise rely on system PATH.
+if [ -f "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
   # shellcheck source=/dev/null
-  . "$HOME/.nvm/nvm.sh"
-  nvm use 20 >/dev/null 2>&1 || true
+  . "${NVM_DIR:-$HOME/.nvm}/nvm.sh"
+  nvm use 20 2>/dev/null || true
 fi
-export PATH="$HOME/.nvm/versions/node/v20.19.2/bin:$PATH"
 
 PONDER_NETWORK="${PONDER_NETWORK:-polygon}"
 USE_TUNNEL="${USE_TUNNEL:-0}"
@@ -64,7 +64,7 @@ ponder_log_has_db_corruption() {
 stop_stale_ponder() {
   pkill -f "ponder/dist/esm/bin/ponder.js dev" 2>/dev/null || true
   pkill -f "ponder dev --disable-ui" 2>/dev/null || true
-  for _ in $(seq 1 10); do
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
     if ! ponder_health_ok; then
       return 0
     fi
@@ -104,7 +104,7 @@ launch_ponder() {
 wait_for_ponder_ready() {
   local attempts="${1:-90}"
   local i
-  for i in $(seq 1 "$attempts"); do
+  for ((i=1; i<=attempts; i++)); do
     if ponder_health_ok; then
       return 0
     fi
@@ -172,7 +172,7 @@ start_tunnel() {
   cloudflared tunnel --url http://127.0.0.1:42069 >"$TUNNEL_LOG" 2>&1 &
   TUNNEL_PID=$!
 
-  for _ in $(seq 1 45); do
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45; do
     TUNNEL_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" | head -1 || true)
     if [ -n "$TUNNEL_URL" ]; then
       write_tunnel_url "$TUNNEL_URL"

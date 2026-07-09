@@ -21,7 +21,7 @@ if [ ! -f "$HOME/.foundry/keystores/${FOUNDRY_ACCOUNT}" ]; then
 fi
 
 ACTUAL_DEPLOYER="$(cast wallet address --account "$FOUNDRY_ACCOUNT" 2>/dev/null || true)"
-if [ -n "$ACTUAL_DEPLOYER" ] && [ "${ACTUAL_DEPLOYER,,}" != "${EXPECTED_DEPLOYER,,}" ]; then
+if [ -n "$ACTUAL_DEPLOYER" ] && [ "$(echo "$ACTUAL_DEPLOYER" | tr '[:upper:]' '[:lower:]')" != "$(echo "$EXPECTED_DEPLOYER" | tr '[:upper:]' '[:lower:]')" ]; then
   echo "Warning: keystore ${FOUNDRY_ACCOUNT} is ${ACTUAL_DEPLOYER}, expected ${EXPECTED_DEPLOYER}"
 fi
 

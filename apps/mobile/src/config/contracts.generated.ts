@@ -18,4 +18,4 @@ export const THETA_DEPLOYMENT = {
 } as const
 
 export const PONDER_GRAPHQL_URL =
-  process.env.EXPO_PUBLIC_PONDER_URL ?? 'https://earlier-picked-simple-rolls.trycloudflare.com/graphql'
+  process.env.EXPO_PUBLIC_PONDER_URL ?? (process.env.EXPO_PUBLIC_PONDER_USE_LOCAL === '1' ? 'http://127.0.0.1:42069/graphql' : 'https://polygon-mainnet-graphql.thetabet.app/graphql')

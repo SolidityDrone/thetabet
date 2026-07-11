@@ -22,6 +22,7 @@ import {
 } from '@/services/azuro/vault-bet-placement'
 import { saveLocalBet } from '@/services/azuro/bet-history'
 import { MatchAiSheet } from '@/components/ai/match-ai-sheet'
+import { loadQvacSettings, QVAC_MODEL_OPTIONS } from '@/services/qvac/qvac-settings'
 import getErrorMessage from '@/utils/get-error-message'
 import type { AzuroBetMode, AzuroBetSelection } from '@/types/azuro'
 import type { ConditionDetailedData } from '@azuro-org/toolkit'
@@ -89,6 +90,7 @@ export default function BetEventScreen() {
   const [isPlacing, setIsPlacing] = useState(false)
   const [quoteText, setQuoteText] = useState<string | null>(null)
   const [aiVisible, setAiVisible] = useState(false)
+  const [loadedModel, setLoadedModel] = useState<string | null>(null)
 
   const vaultTotalUsdt = useMemo(() => {
     if (!tipsterVault?.totalAssets) return 0
@@ -189,6 +191,13 @@ export default function BetEventScreen() {
       setBetMode('personal')
     }
   }, [betMode, canBetAsTipster])
+
+  useEffect(() => {
+    loadQvacSettings().then((settings) => {
+      const entry = QVAC_MODEL_OPTIONS.find((m) => m.preset === settings.modelPreset)
+      setLoadedModel(entry?.label ?? settings.modelPreset)
+    })
+  }, [])
 
   const handleModeChange = useCallback((mode: AzuroBetMode) => {
     setBetMode(mode)
@@ -340,7 +349,16 @@ export default function BetEventScreen() {
           <ChevronLeft color={colors.text} size={22} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Event</Text>
-        <View style={styles.backButtonSpacer} />
+        <View style={styles.headerRight}>
+          <TouchableOpacity style={styles.aiBadge} onPress={() => setAiVisible(true)} activeOpacity={0.85}>
+            {loadedModel ? (
+              <Text style={styles.aiBadgeLabel}>{loadedModel}</Text>
+            ) : null}
+            <View style={styles.aiWandCircle}>
+              <Sparkles size={14} color={colors.onPrimary} />
+            </View>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {isLoading && !game ? (
@@ -462,30 +480,33 @@ export default function BetEventScreen() {
             </View>
           ) : null}
 
-          <TouchableOpacity
-            style={[styles.aiFab, { bottom: cartHeight ? cartHeight + 18 : 18 }]}
-            onPress={() => setAiVisible(true)}
-            activeOpacity={0.85}
-          >
-            <Sparkles size={18} color={colors.onPrimary} />
-          </TouchableOpacity>
-
           <MatchAiSheet
             visible={aiVisible}
             onClose={() => setAiVisible(false)}
+            gameId={game?.id ?? id ?? ''}
             matchTitle={game?.title ?? 'Match'}
             startsAt={game?.startsAt ?? null}
             league={game?.league?.name ?? null}
             markets={markets.map((condition) => ({
+              conditionId: condition.conditionId,
               conditionTitle: condition.title,
               outcomes: condition.outcomes
                 .filter((o) => o.state === 'Active')
                 .map((o) => ({
+                  outcomeId: o.outcomeId,
                   title: o.title,
                   decimalOdds: formatAzuroOdds(o.odds),
+                  rawOdds: o.odds,
                 })),
             }))}
-            selected={selected}
+            onApplyPick={(pick) => {
+              const condition = conditions.find((c) => c.conditionId === pick.conditionId)
+              const outcome = condition?.outcomes.find((o) => o.outcomeId === pick.outcomeId)
+              if (condition && outcome) {
+                handleSelectOutcome(condition, outcome)
+                toast.success(`Selected: ${pick.outcomeTitle}`)
+              }
+            }}
           />
         </>
       )}
@@ -512,8 +533,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  backButtonSpacer: {
-    width: 40,
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   headerTitle: {
     color: colors.text,
@@ -521,6 +544,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.3,
   },
+
   content: {
     paddingHorizontal: theme.spacing.lg,
     gap: 12,
@@ -590,17 +614,30 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
   },
-  aiFab: {
-    position: 'absolute',
-    right: 18,
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+  aiBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingLeft: 12,
+    paddingRight: 4,
+    paddingVertical: 4,
+    borderRadius: 16,
+    backgroundColor: colors.cardDark,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  aiBadgeLabel: {
+    color: colors.textTertiary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  aiWandCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.primaryDim,
   },
   previewCard: {
     borderRadius: 12,

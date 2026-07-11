@@ -2,8 +2,11 @@ import {
   cancel,
   downloadAsset,
   getModelInfo,
+  LLAMA_3_2_1B_INST_Q4_0,
+  QWEN3_1_7B_INST_Q4,
+  QWEN3_5_0_8B_MULTIMODAL_Q4_K_M,
+  QWEN3_5_2B_MULTIMODAL_Q4_K_M,
   QWEN3_600M_INST_Q4,
-  SMOLLM2_360M_INST_Q8,
   type ModelProgressUpdate,
 } from '@qvac/sdk'
 import AsyncStorage from '@react-native-async-storage/async-storage'
@@ -32,13 +35,25 @@ type RegistryModel = {
 }
 
 const MODEL_REGISTRY: Record<QvacModelPreset, RegistryModel> = {
-  'smollm2-360m-instruct-q8': {
-    ...SMOLLM2_360M_INST_Q8,
-    label: 'SmolLM2 360M',
-  },
   'qwen3-600m-instruct-q4': {
     ...QWEN3_600M_INST_Q4,
     label: 'Qwen3 600M',
+  },
+  'qwen3.5-0.8b-multimodal-q4_k_m': {
+    ...QWEN3_5_0_8B_MULTIMODAL_Q4_K_M,
+    label: 'Qwen3.5 0.8B',
+  },
+  'llama-3.2-1b-instruct-q4_0': {
+    ...LLAMA_3_2_1B_INST_Q4_0,
+    label: 'Llama 3.2 1B',
+  },
+  'qwen3-1.7b-instruct-q4': {
+    ...QWEN3_1_7B_INST_Q4,
+    label: 'Qwen3 1.7B',
+  },
+  'qwen3.5-2b-multimodal-q4_k_m': {
+    ...QWEN3_5_2B_MULTIMODAL_Q4_K_M,
+    label: 'Qwen3.5 2B',
   },
 }
 

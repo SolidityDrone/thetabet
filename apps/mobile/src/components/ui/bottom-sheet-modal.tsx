@@ -1,5 +1,6 @@
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
+import { useModalBottomInset } from '@/hooks/use-modal-bottom-inset'
 import type { ReactNode } from 'react'
 import {
   Modal,
@@ -8,10 +9,10 @@ import {
   Text,
   TouchableOpacity,
   View,
+  useWindowDimensions,
   type StyleProp,
   type ViewStyle,
 } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 type Props = {
   visible: boolean
@@ -32,23 +33,36 @@ export function BottomSheetModal({
   dismissOnBackdrop = true,
   cardStyle,
 }: Props) {
-  const insets = useSafeAreaInsets()
+  const bottomInset = useModalBottomInset()
+  const { height: windowHeight } = useWindowDimensions()
+  const maxSheetHeight = Math.round(windowHeight * 0.84 - bottomInset)
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable
-        style={styles.backdrop}
-        onPress={dismissOnBackdrop ? onClose : undefined}
-      >
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <View style={styles.root}>
         <Pressable
-          style={[styles.card, { paddingBottom: Math.max(insets.bottom, 20) }, cardStyle]}
-          onPress={(event) => event.stopPropagation()}
+          style={styles.backdrop}
+          onPress={dismissOnBackdrop ? onClose : undefined}
+        />
+        <View
+          style={[
+            styles.sheetContainer,
+            { marginBottom: bottomInset, maxHeight: maxSheetHeight },
+          ]}
         >
-          {title ? <Text style={styles.title}>{title}</Text> : null}
-          {message ? <Text style={styles.message}>{message}</Text> : null}
-          {children}
-        </Pressable>
-      </Pressable>
+          <View style={[styles.card, cardStyle]}>
+            {title ? <Text style={styles.title}>{title}</Text> : null}
+            {message ? <Text style={styles.message}>{message}</Text> : null}
+            <View style={styles.cardBody}>{children}</View>
+          </View>
+        </View>
+      </View>
     </Modal>
   )
 }
@@ -101,10 +115,17 @@ export function SheetActions({
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
+  root: {
     flex: 1,
-    backgroundColor: colors.overlay,
     justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.overlay,
+  },
+  sheetContainer: {
+    width: '100%',
+    flexShrink: 1,
   },
   card: {
     backgroundColor: colors.card,
@@ -114,6 +135,16 @@ const styles = StyleSheet.create({
     borderColor: colors.borderNeon,
     paddingHorizontal: theme.spacing.xl,
     paddingTop: theme.spacing.xl,
+    paddingBottom: theme.spacing.md,
+    gap: theme.spacing.md,
+    overflow: 'hidden',
+    flexGrow: 1,
+    flexShrink: 1,
+  },
+  cardBody: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minHeight: 0,
     gap: theme.spacing.md,
   },
   title: {
@@ -132,8 +163,9 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     alignItems: 'center',
     gap: 10,
-    marginTop: 4,
     flexWrap: 'wrap',
+    flexShrink: 0,
+    paddingTop: 4,
   },
   primaryButton: {
     backgroundColor: colors.primary,

@@ -323,7 +323,10 @@ export class PearChat {
 
     const core = this.store.get({ name: 'channel-' + channel.id })
     await core.ready()
-    channel.coreKey = b4a.toString(core.key, 'hex')
+    channel.coreKey = JSON.stringify({
+      publicKey: b4a.toString(core.keyPair.publicKey, 'hex'),
+      secretKey: b4a.toString(core.keyPair.secretKey, 'hex'),
+    })
 
     const discovery = this.swarm.join(b4a.from(channel.topicKey, 'hex'), {
       server: announce && !channel.isPrivate,

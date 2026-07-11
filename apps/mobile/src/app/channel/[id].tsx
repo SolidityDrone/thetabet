@@ -125,6 +125,12 @@ export default function ChannelScreen() {
     Alert.alert('Copied', 'Topic key copied — share with fans to join this private channel.')
   }
 
+  const copyCoreKey = async () => {
+    if (!channel?.coreKey) return
+    await Clipboard.setStringAsync(channel.coreKey)
+    Alert.alert('Copied', 'Core key pair copied — paste as <coreKey> in console peer tool.')
+  }
+
   const shareKey = async () => {
     if (!channel?.isPrivate || !id || !peerPubkey.trim()) return
     try {
@@ -160,6 +166,11 @@ export default function ChannelScreen() {
           <TouchableOpacity style={styles.toolButton} onPress={copyTopicKey}>
             <Share2 size={16} color={colors.primary} />
             <Text style={styles.toolButtonText}>Copy topic</Text>
+          </TouchableOpacity>
+        ) : null}
+        {channel.coreKey ? (
+          <TouchableOpacity style={styles.toolButton} onPress={copyCoreKey}>
+            <Text style={styles.toolButtonText}>Copy core key</Text>
           </TouchableOpacity>
         ) : null}
         {channel.isPrivate && channel.kind !== 'dm' ? (

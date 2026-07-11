@@ -1,3 +1,5 @@
+import { ContextSizeSlider } from '@/components/settings/context-size-slider';
+import { LanguagePickerModal } from '@/components/settings/language-picker-modal'
 import Header from '@/components/header';
 import { WalletSecretExportRow } from '@/components/wallet/wallet-secret-export';
 import { clearAvatar } from '@/config/avatar-options';
@@ -8,7 +10,7 @@ import useWalletAvatar from '@/hooks/use-wallet-avatar';
 import { useWallet } from '@tetherto/wdk-react-native-provider';
 import * as Clipboard from 'expo-clipboard';
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation';
-import { Copy, Info, Shield, Trash2, Wallet } from 'lucide-react-native';
+import { ChevronDown, Copy, Info, Shield, Trash2, Wallet } from 'lucide-react-native';
 import React from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,17 +18,28 @@ import { toast } from 'sonner-native';
 import { colors } from '@/constants/colors';
 import type { QvacUserSettings } from '@/services/qvac/qvac-settings'
 import {
+  getCtxLimitsForPreset,
   loadQvacSettings,
   QVAC_CTX_LIMITS,
   QVAC_MODEL_OPTIONS,
+  QVAC_OUTPUT_LANGUAGE_OPTIONS,
   saveQvacSettings,
+  type QvacOutputLanguage,
 } from '@/services/qvac/qvac-settings'
+import { QVAC_INFERENCE_MODE } from '@/services/qvac/qvac-client'
 import {
   downloadQvacModel,
   formatModelSize,
   getQvacModelRegistry,
   isQvacModelMarkedInstalled,
 } from '@/services/qvac/qvac-model-manager'
+import {
+  downloadTranslationModel,
+  getTranslationInstallStatus,
+  getTranslationModelEntry,
+  isTranslationModelInstalled,
+  requiresTranslationModel,
+} from '@/services/qvac/qvac-translation-models'
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const router = useDebouncedNavigation();
@@ -36,8 +49,15 @@ export default function SettingsScreen() {
   const avatar = useWalletAvatar();
   const [qvac, setQvac] = React.useState<QvacUserSettings | null>(null)
   const [installed, setInstalled] = React.useState<boolean | null>(null)
+  const [translationInstalled, setTranslationInstalled] = React.useState<boolean | null>(null)
   const [downloading, setDownloading] = React.useState(false)
+  const [downloadingTranslation, setDownloadingTranslation] = React.useState(false)
   const [downloadPct, setDownloadPct] = React.useState<number | null>(null)
+  const [translationDownloadPct, setTranslationDownloadPct] = React.useState<number | null>(null)
+  const [languagePickerVisible, setLanguagePickerVisible] = React.useState(false)
+  const [translationInstallByLang, setTranslationInstallByLang] = React.useState<
+    Partial<Record<QvacOutputLanguage, boolean>>
+  >({ en: true })
   React.useEffect(() => {
     loadQvacSettings().then(setQvac).catch(() => setQvac(null))
   }, [])
@@ -48,6 +68,46 @@ export default function SettingsScreen() {
       .then(setInstalled)
       .catch(() => setInstalled(false))
   }, [qvac?.modelPreset])
+
+  React.useEffect(() => {
+    if (!qvac) return
+    if (!requiresTranslationModel(qvac.outputLanguage)) {
+      setTranslationInstalled(true)
+      return
+    }
+    isTranslationModelInstalled(qvac.outputLanguage)
+      .then(setTranslationInstalled)
+      .catch(() => setTranslationInstalled(false))
+  }, [qvac?.outputLanguage])
+
+  React.useEffect(() => {
+    if (!languagePickerVisible) return
+    getTranslationInstallStatus()
+      .then(setTranslationInstallByLang)
+      .catch(() => setTranslationInstallByLang({ en: true }))
+  }, [languagePickerVisible])
+
+  const handleDownloadTranslationModel = async () => {
+    if (!qvac || downloadingTranslation || !requiresTranslationModel(qvac.outputLanguage)) return
+
+    setDownloadingTranslation(true)
+    setTranslationDownloadPct(0)
+    try {
+      await downloadTranslationModel(qvac.outputLanguage, (progress) => {
+        setTranslationDownloadPct(progress.percentage)
+      })
+      setTranslationInstalled(true)
+      setTranslationInstallByLang((prev) => ({ ...prev, [qvac.outputLanguage]: true }))
+      toast.success('Translation model downloaded')
+    } catch (error) {
+      console.error('Translation model download failed:', error)
+      const msg = error instanceof Error ? error.message : String(error)
+      toast.error(msg || 'Translation model download failed')
+    } finally {
+      setDownloadingTranslation(false)
+      setTranslationDownloadPct(null)
+    }
+  }
 
   const handleDownloadModel = async () => {
     if (!qvac || downloading) return
@@ -104,6 +164,59 @@ export default function SettingsScreen() {
     await Clipboard.setStringAsync(address);
     toast.success(`${networkName} address copied to clipboard`);
   };
+
+  const ctxLimits = qvac ? getCtxLimitsForPreset(qvac.modelPreset) : QVAC_CTX_LIMITS
+
+  const handleModelSelect = async (preset: QvacUserSettings['modelPreset']) => {
+    if (!qvac || downloading) return
+    const limits = getCtxLimitsForPreset(preset)
+    const next = {
+      ...qvac,
+      modelPreset: preset,
+      ctxSize: Math.min(Math.max(qvac.ctxSize, limits.min), limits.max),
+    }
+    setQvac(next)
+    await saveQvacSettings(next)
+  }
+
+  const handleCtxDraft = (ctxSize: number) => {
+    if (!qvac) return
+    setQvac({ ...qvac, ctxSize })
+  }
+
+  const handleCtxCommit = async (ctxSize: number) => {
+    if (!qvac) return
+    const next = { ...qvac, ctxSize }
+    setQvac(next)
+    await saveQvacSettings(next)
+  }
+
+  const handleLanguageSelect = async (outputLanguage: QvacOutputLanguage) => {
+    if (!qvac || downloading || downloadingTranslation) return
+    const next = { ...qvac, outputLanguage }
+    setQvac(next)
+    await saveQvacSettings(next)
+
+    if (!requiresTranslationModel(outputLanguage)) {
+      setTranslationInstalled(true)
+      return
+    }
+
+    const installed = await isTranslationModelInstalled(outputLanguage)
+    setTranslationInstalled(installed)
+    const label =
+      QVAC_OUTPUT_LANGUAGE_OPTIONS.find((o) => o.code === outputLanguage)?.label ?? outputLanguage
+    if (!installed) {
+      toast.info(`Download the ${label} translation model below to enable ${label} output.`)
+    }
+  }
+
+  const translationEntry = qvac ? getTranslationModelEntry(qvac.outputLanguage) : null
+  const needsTranslation = qvac ? requiresTranslationModel(qvac.outputLanguage) : false
+  const selectedLang =
+    QVAC_OUTPUT_LANGUAGE_OPTIONS.find((o) => o.code === qvac?.outputLanguage) ?? null
+  const translationReady = !needsTranslation || translationInstalled === true
+  const canPickLanguage = !downloading && !downloadingTranslation
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -202,12 +315,7 @@ export default function SettingsScreen() {
                     <TouchableOpacity
                       key={option.preset}
                       style={[styles.modelPill, selected && styles.modelPillActive]}
-                      onPress={async () => {
-                        if (!qvac || downloading) return
-                        const next = { ...qvac, modelPreset: option.preset }
-                        setQvac(next)
-                        await saveQvacSettings(next)
-                      }}
+                      onPress={() => handleModelSelect(option.preset)}
                       disabled={downloading}
                     >
                       <Text style={[styles.modelPillText, selected && styles.modelPillTextActive]}>
@@ -254,39 +362,102 @@ export default function SettingsScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
-            <View style={[styles.infoRow, styles.infoRowLast]}>
-              <Text style={styles.infoLabel}>Context</Text>
-              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+            <View style={[styles.infoRow, styles.ctxRow, styles.translationSection]}>
+              <Text style={styles.infoLabel}>Translation</Text>
+              <Text style={styles.downloadHint}>
+                Hints writes in English. After analysis finishes, it translates on-device to your
+                chosen language.
+              </Text>
+
+              {needsTranslation ? (
+                <View style={styles.aiDownloadRow}>
+                  <View style={{ flex: 1, gap: 4 }}>
+                    <Text style={styles.translationStep}>Step 1 · Download model</Text>
+                    <Text style={styles.downloadHint}>
+                      {translationEntry
+                        ? `${translationEntry.label} · ${formatModelSize(translationEntry.expectedSize)} on device`
+                        : 'Bergamot on-device translation'}
+                    </Text>
+                    <Text style={styles.downloadStatus}>
+                      {downloadingTranslation
+                        ? `Downloading… ${Math.round(translationDownloadPct ?? 0)}%`
+                        : translationInstalled
+                          ? 'Ready on this device'
+                          : 'Required before translation works'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.downloadButton,
+                      (downloadingTranslation || translationInstalled) && styles.downloadButtonDisabled,
+                    ]}
+                    onPress={handleDownloadTranslationModel}
+                    disabled={downloadingTranslation || translationInstalled === true}
+                  >
+                    <Text style={styles.downloadButtonText}>
+                      {downloadingTranslation
+                        ? 'Downloading'
+                        : translationInstalled
+                          ? 'Installed'
+                          : 'Download'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              <View style={styles.translationLangBlock}>
+                <Text style={styles.translationStep}>
+                  {needsTranslation ? 'Step 2 · Output language' : 'Output language'}
+                </Text>
+                {!translationReady && needsTranslation ? (
+                  <Text style={styles.translationWarn}>
+                    Download the {selectedLang?.label ?? 'translation'} model above first.
+                  </Text>
+                ) : null}
                 <TouchableOpacity
-                  style={styles.smallButton}
-                  onPress={async () => {
-                    if (!qvac) return
-                    const next = {
-                      ...qvac,
-                      ctxSize: Math.max(QVAC_CTX_LIMITS.min, qvac.ctxSize - 512),
-                    }
-                    setQvac(next)
-                    await saveQvacSettings(next)
-                  }}
+                  style={[
+                    styles.languageSelector,
+                    !translationReady && needsTranslation && styles.languageSelectorPending,
+                  ]}
+                  onPress={() => setLanguagePickerVisible(true)}
+                  activeOpacity={0.7}
+                  disabled={!canPickLanguage}
                 >
-                  <Text style={styles.smallButtonText}>-</Text>
-                </TouchableOpacity>
-                <Text style={styles.infoValue}>{qvac?.ctxSize ?? '—'}</Text>
-                <TouchableOpacity
-                  style={styles.smallButton}
-                  onPress={async () => {
-                    if (!qvac) return
-                    const next = {
-                      ...qvac,
-                      ctxSize: Math.min(QVAC_CTX_LIMITS.max, qvac.ctxSize + 512),
-                    }
-                    setQvac(next)
-                    await saveQvacSettings(next)
-                  }}
-                >
-                  <Text style={styles.smallButtonText}>+</Text>
+                  <View style={styles.languageSelectorContent}>
+                    <View style={styles.languageSelectorRow}>
+                      <Text style={styles.languageSelectorFlag}>{selectedLang?.flag ?? '🇬🇧'}</Text>
+                      <Text style={styles.languageSelectorLabel}>
+                        {selectedLang?.label ?? 'English'}
+                      </Text>
+                    </View>
+                    <Text style={styles.languageSelectorNative}>
+                      {selectedLang?.nativeLabel ?? ''}
+                      {needsTranslation && translationReady ? ' · translation active' : ''}
+                      {needsTranslation && !translationReady ? ' · English until model installed' : ''}
+                    </Text>
+                  </View>
+                  <ChevronDown size={18} color={colors.textSecondary} />
                 </TouchableOpacity>
               </View>
+            </View>
+            <View style={[styles.infoRow, styles.infoRowLast, styles.ctxRow]}>
+              {qvac ? (
+                <>
+                  <ContextSizeSlider
+                    value={qvac.ctxSize}
+                    min={ctxLimits.min}
+                    max={ctxLimits.max}
+                    step={ctxLimits.step}
+                    onValueChange={handleCtxDraft}
+                    onSlidingComplete={handleCtxCommit}
+                  />
+                  <Text style={styles.cpuHint}>
+                    Inference: {QVAC_INFERENCE_MODE} · 0 GPU layers · reload after changing
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.infoValue}>Loading…</Text>
+              )}
             </View>
           </View>
         </View>
@@ -309,6 +480,14 @@ export default function SettingsScreen() {
           </Text>
         </View>
       </ScrollView>
+
+      <LanguagePickerModal
+        visible={languagePickerVisible}
+        selected={qvac?.outputLanguage ?? null}
+        installByLang={translationInstallByLang}
+        onSelect={handleLanguageSelect}
+        onClose={() => setLanguagePickerVisible(false)}
+      />
     </View>
   );
 }
@@ -390,6 +569,62 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     marginTop: 2,
+  },
+  translationSection: {
+    gap: 8,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderDark,
+  },
+  translationStep: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  translationLangBlock: {
+    gap: 6,
+    marginTop: 4,
+  },
+  translationWarn: {
+    color: colors.warning,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  languageSelectorPending: {
+    borderColor: colors.warning,
+  },
+  languageSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.cardDark,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    marginTop: 4,
+  },
+  languageSelectorContent: {
+    flexDirection: 'column',
+    gap: 2,
+  },
+  languageSelectorLabel: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  languageSelectorNative: {
+    color: colors.textSecondary,
+    fontSize: 12,
+  },
+  languageSelectorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  languageSelectorFlag: {
+    fontSize: 18,
   },
   aiDownloadRow: {
     flexDirection: 'row',
@@ -496,19 +731,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18,
   },
-  smallButton: {
-    width: 34,
-    height: 30,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.cardDark,
-    alignItems: 'center',
-    justifyContent: 'center',
+  ctxRow: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
   },
-  smallButtonText: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: '800',
+  cpuHint: {
+    color: colors.textTertiary,
+    fontSize: 10,
+    lineHeight: 14,
+    marginTop: 4,
   },
 });

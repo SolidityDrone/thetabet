@@ -11,14 +11,23 @@ import {
 } from '@/services/qvac/qvac-model-manager'
 import { loadQvacSettings, type QvacModelPreset } from '@/services/qvac/qvac-settings'
 
-const MAX_MARKETS = 8
-const MAX_OUTCOMES_PER_MARKET = 6
-const MAX_SOURCES = 3
-const MAX_SOURCE_CHARS = 500
-const MAX_OUTPUT_TOKENS = 420
+export const QVAC_INFERENCE_MODE = 'cpu-only' as const
+
+/** CPU-only llamacpp config — never use GPU/Vulkan on Android (crashes on many devices). */
+export function buildCpuModelConfig(ctxSize: number) {
+  return {
+    ctx_size: ctxSize,
+    verbosity: VERBOSITY.ERROR,
+    device: 'cpu',
+    gpu_layers: 0,
+    'split-mode': 'none' as const,
+    'main-gpu': 0,
+  }
+}
 
 let modelId: string | null = null
 let loadedPreset: QvacModelPreset | null = null
+let loadedCtxSize: number | null = null
 let activeRequestId: string | null = null
 
 async function ensureModelLoaded(preset: QvacModelPreset, ctxSize: number) {
@@ -29,7 +38,7 @@ async function ensureModelLoaded(preset: QvacModelPreset, ctxSize: number) {
     )
   }
 
-  if (modelId && loadedPreset === preset) return modelId
+  if (modelId && loadedPreset === preset && loadedCtxSize === ctxSize) return modelId
   if (modelId) {
     await unloadQvacModel()
   }
@@ -38,10 +47,7 @@ async function ensureModelLoaded(preset: QvacModelPreset, ctxSize: number) {
     modelId = await loadModel({
       modelSrc: entry.src,
       modelType: 'llm',
-      modelConfig: {
-        ctx_size: ctxSize,
-        verbosity: VERBOSITY.ERROR,
-      },
+      modelConfig: buildCpuModelConfig(ctxSize),
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
@@ -53,7 +59,13 @@ async function ensureModelLoaded(preset: QvacModelPreset, ctxSize: number) {
     throw error
   }
   loadedPreset = preset
+  loadedCtxSize = ctxSize
   return modelId
+}
+
+export async function ensureModelReady(): Promise<string> {
+  const settings = await loadQvacSettings()
+  return ensureModelLoaded(settings.modelPreset, settings.ctxSize)
 }
 
 export async function unloadQvacModel() {
@@ -73,6 +85,7 @@ export async function unloadQvacModel() {
     } finally {
       modelId = null
       loadedPreset = null
+      loadedCtxSize = null
     }
   }
 }
@@ -86,83 +99,61 @@ export async function cancelQvacInference(requestId?: string | null) {
   }
 }
 
-export type MatchResearchInput = {
-  matchTitle: string
-  startsAt?: string | null
-  league?: string | null
-  markets: Array<{
-    conditionTitle: string
-    outcomes: Array<{ title: string; decimalOdds: number }>
-  }>
-  sources: Array<{ title: string; url: string; text: string }>
+export type CompletionOpts = {
+  maxTokens?: number
+  temperature?: number
+  signal?: AbortSignal
+  /** Pre-filled assistant text — forces continuation instead of chat greetings. */
+  assistantPrefix?: string
 }
 
-function buildPrompt(input: MatchResearchInput): string {
-  const marketText = input.markets
-    .slice(0, MAX_MARKETS)
-    .map((m) => {
-      const outcomes = m.outcomes
-        .slice(0, MAX_OUTCOMES_PER_MARKET)
-        .map((o) => `- ${o.title} (${o.decimalOdds.toFixed(2)}x)`)
-        .join('\n')
-      return `Market: ${m.conditionTitle}\n${outcomes}`
-    })
-    .join('\n\n')
-
-  const sourcesText = input.sources
-    .slice(0, MAX_SOURCES)
-    .map(
-      (s, i) =>
-        `[${i + 1}] ${s.title}\n${s.text.slice(0, MAX_SOURCE_CHARS).trim()}`
-    )
-    .join('\n\n')
-
-  return [
-    'You are ThetaBet Match Analyst. Give one strong betting tip for this match.',
-    `Match: ${input.matchTitle}`,
-    input.league ? `League: ${input.league}` : '',
-    input.startsAt ? `Kickoff: ${input.startsAt}` : '',
-    '',
-    'Pick only from these outcomes:',
-    marketText || '(no markets)',
-    '',
-    'Research notes:',
-    sourcesText || '(no web sources)',
-    '',
-    'Reply briefly:',
-    '1) Best pick (exact outcome label)',
-    '2) Why (3 short bullets, cite [1]/[2])',
-    '3) Risk (1-2 bullets)',
-  ]
-    .filter(Boolean)
-    .join('\n')
+function completionErrorMessage(event: {
+  stopReason?: string
+  error?: { message?: string }
+}): string | null {
+  if (event.stopReason === 'error' && event.error?.message) {
+    return event.error.message
+  }
+  return null
 }
 
-export async function* streamMatchTip(
-  input: MatchResearchInput,
-  options?: { signal?: AbortSignal }
+export async function* streamCompletion(
+  prompt: string,
+  opts: CompletionOpts = {}
 ): AsyncGenerator<string> {
-  const settings = await loadQvacSettings()
-  const loadedModelId = await ensureModelLoaded(settings.modelPreset, settings.ctxSize)
-  const prompt = buildPrompt(input)
+  const loadedModelId = await ensureModelReady()
+
+  const history: Array<{ role: 'user' | 'assistant'; content: string }> = [
+    { role: 'user', content: prompt },
+  ]
+  if (opts.assistantPrefix) {
+    history.push({ role: 'assistant', content: opts.assistantPrefix })
+  }
 
   const run = completion({
     modelId: loadedModelId,
-    history: [{ role: 'user', content: prompt }],
+    history,
     stream: true,
     generationParams: {
-      temp: 0.4,
-      predict: MAX_OUTPUT_TOKENS,
+      temp: opts.temperature ?? 0.4,
+      predict: opts.maxTokens ?? 320,
     },
   })
 
   activeRequestId = run.requestId
 
   try {
+    if (opts.assistantPrefix) {
+      yield opts.assistantPrefix
+    }
     for await (const event of run.events) {
-      if (options?.signal?.aborted) {
+      if (opts.signal?.aborted) {
         await cancelQvacInference(run.requestId)
         return
+      }
+      if (event.type === 'completionDone') {
+        const err = completionErrorMessage(event)
+        if (err) throw new Error(err)
       }
       if (event.type === 'contentDelta' && event.text) {
         yield event.text
@@ -173,4 +164,12 @@ export async function* streamMatchTip(
       activeRequestId = null
     }
   }
+}
+
+export async function completeOnce(prompt: string, opts: CompletionOpts = {}): Promise<string> {
+  let out = ''
+  for await (const chunk of streamCompletion(prompt, opts)) {
+    out += chunk
+  }
+  return out
 }

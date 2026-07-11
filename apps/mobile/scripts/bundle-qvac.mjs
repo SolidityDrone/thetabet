@@ -79,7 +79,20 @@ console.log(`Copied no-plugins bundle (${(noPluginsContent.length / 1024).toFixe
 await generateAddonsManifest({ bundlePath: generatedBundle, outputDir: qvacDir, projectRoot, logger })
 
 // ---- Step 2: Full bundle (with LLM plugin, for inference) ----
-fs.writeFileSync(fullConfigPath, JSON.stringify({ plugins: ['@qvac/sdk/llamacpp-completion/plugin'] }, null, 2), 'utf8')
+fs.writeFileSync(
+  fullConfigPath,
+  JSON.stringify(
+    {
+      plugins: [
+        '@qvac/sdk/llamacpp-completion/plugin',
+        '@qvac/sdk/nmtcpp-translation/plugin',
+      ],
+    },
+    null,
+    2
+  ),
+  'utf8'
+)
 
 console.log('\nBundling QVAC worker (with LLM plugin — for inference)…')
 await bundleSdk({ projectRoot, hosts, quiet: false, configPath: fullConfigPath })
@@ -104,7 +117,7 @@ console.log('Restored no-plugins bundle as default (qvac/worker.bundle.js + SDK 
 
 // ---- Step 4: Apply FULL manifest (native libs for both bundles are linked in APK) ----
 fs.writeFileSync(path.join(qvacDir, 'addons.manifest.json'), JSON.stringify(fullManifest, null, 2), 'utf8')
-console.log('Applied full addons manifest — @qvac/llm-llamacpp native library linked in APK')
+console.log('Applied full addons manifest — LLM + translation native libraries linked in APK')
 
 console.log('\nDone! Bundles:\n  - qvac/worker.bundle.js        (%d KB, no plugins — for download)\n  - qvac/worker.full.bundle.js    (%d KB, with LLM plugin — for inference)',
   Math.round(fs.statSync(generatedBundle).size / 1024),

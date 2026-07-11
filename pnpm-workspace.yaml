@@ -3,7 +3,7 @@ packages:
   - ponder
 allowBuilds:
   bufferutil: true
-  esbuild: set this to true or false
+  esbuild: false
   utf-8-validate: true
 minimumReleaseAgeExclude:
   - ponder@0.16.7

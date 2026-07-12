@@ -17,6 +17,7 @@ import { ddgSearch, fetchPageText, siteOf } from '@/services/qvac/web-research'
 import {
   buildOutcomeCatalog,
   buildSmartFallbackPicks,
+  createStreamSanitizer,
   formatOutcomeCatalogForPrompt,
   formatPicksAnswerBlock,
   hasSubstantiveAnalysis,
@@ -28,6 +29,7 @@ import {
   parseTeamSides,
   pickDiverseMarketsForAi,
   sanitizeModelAnswer,
+  hasThinkingNoise,
   stripPromptEchoLines,
   teamSideHints,
   type MatchMarketInput,
@@ -219,17 +221,24 @@ function buildPreviewPrompt(
     'Bets to justify:',
     playBlock,
     '',
-    'Write like a tipster article. Argue cause then bet. Use real analysis — never copy instruction text.',
-    'Never write only the match name in MAIN — always add who you favour and why.',
-    'Example MAIN tone: "Main tip favours England at ~1.90 — deeper squad and knockout experience edge Norway."',
+    'Write like a tipster article. Argue cause then bet. Use scout facts — never copy instruction text or meta-descriptions.',
+    'Never write only the match name in MAIN — always add who you favour, odds, and why.',
     '',
-    'Use this tagged format (write real prose, not placeholders):',
-    'MAIN: Two or three sentences — main prediction, favourite, odds, why.',
-    `HOME: Two or three sentences on ${home} form, injuries, and tournament run.`,
-    `AWAY: Two or three sentences on ${away} form, injuries, and key players.`,
-    'REASON1: One sentence tactical motivation for your main recommended bet.',
-    'REASON2: One sentence tactical motivation for alt bet 2 (or NONE).',
-    'REASON3: One sentence tactical motivation for alt bet 3 (or NONE).',
+    'Example style (write NEW analysis for this match — do not copy this example):',
+    `MAIN: ${home} arrive as slight favourites around 2.10 — midfield control and knockout experience should tell.`,
+    `HOME: ${home} won four of five recently, conceding once; the spine is intact despite one doubtful wide option.`,
+    `AWAY: ${away} dominated possession but struggled to convert; their best creator is back and pace wide matters.`,
+    'REASON1: Main bet fits because the favourite presses well when the underdog must chase.',
+    'REASON2: Alt play targets value if the favourite sits deep (or NONE).',
+    'REASON3: Longshot only if live odds drift (or NONE).',
+    '',
+    'Your reply — tagged lines with real sentences only:',
+    'MAIN:',
+    'HOME:',
+    'AWAY:',
+    'REASON1:',
+    'REASON2:',
+    'REASON3:',
   ]
     .filter(Boolean)
     .join('\n')
@@ -451,7 +460,9 @@ export async function* runMatchScout(
   yield { type: 'activity', message: 'Starting model (CPU)…' }
   try {
     let previewBody = ''
+    let rawPreviewChars = 0
     let tokenCount = 0
+    const streamSanitizer = createStreamSanitizer()
     for await (const chunk of streamCompletion(buildPreviewPrompt(input, intel), {
       maxTokens: PREVIEW_TOKENS,
       temperature: 0.38,
@@ -460,12 +471,21 @@ export async function* runMatchScout(
     })) {
       if (signal?.aborted) return
       if (!chunk) continue
-      tokenCount += 1
-      previewBody += chunk
-      yield { type: 'answer-delta', text: chunk }
-      if (tokenCount === 1) {
+      rawPreviewChars += chunk.length
+      const safe = streamSanitizer.feed(chunk)
+      if (safe) {
+        tokenCount += 1
+        previewBody += safe
+        yield { type: 'answer-delta', text: safe }
+      }
+      if (streamSanitizer.isThinking() || (hasThinkingNoise(chunk) && !safe)) {
+        yield {
+          type: 'activity',
+          message: `Model reasoning (hidden) · ${rawPreviewChars} chars`,
+        }
+      } else if (tokenCount === 1) {
         yield { type: 'activity', message: 'Streaming analysis…' }
-      } else if (tokenCount % 8 === 0) {
+      } else if (tokenCount > 0 && tokenCount % 8 === 0) {
         yield { type: 'activity', message: `Streaming analysis · ${previewBody.length} chars` }
       }
     }
@@ -491,10 +511,14 @@ export async function* runMatchScout(
     (isGarbageModelOutput(fullAnswer) || !hasSubstantiveAnalysis(fullAnswer, input.matchTitle))
   ) {
     try {
-      const extra = await completeOnce(
+      yield { type: 'answer-reset' }
+      yield { type: 'activity', message: 'Rewriting analysis…' }
+      let retryBody = ''
+      const retrySanitizer = createStreamSanitizer()
+      for await (const chunk of streamCompletion(
         [
           buildPreviewPrompt(input, intel),
-          'Rewrite as a tipster preview using scout facts. No URLs. No thinking tags. MAIN/HOME/AWAY/REASON lines only.',
+          'Rewrite as a tipster preview using scout facts. No URLs. No thinking tags. Never repeat instruction text. MAIN/HOME/AWAY/REASON lines with real sentences only.',
         ].join('\n'),
         {
           assistantPrefix: 'MAIN: ',
@@ -502,13 +526,17 @@ export async function* runMatchScout(
           temperature: 0.42,
           signal,
         }
-      )
-      const trimmed = sanitizeModelAnswer(extra.trim())
-      if (trimmed && !isGarbageModelOutput(trimmed)) {
-        const addon = /^main:/i.test(trimmed) ? trimmed : `MAIN: ${trimmed}`
-        fullAnswer = addon
-        yield { type: 'answer-reset' }
-        yield { type: 'answer-delta', text: fullAnswer }
+      )) {
+        if (signal?.aborted) return
+        if (!chunk) continue
+        const safe = retrySanitizer.feed(chunk)
+        if (!safe) continue
+        retryBody += safe
+        yield { type: 'answer-delta', text: safe }
+      }
+      const trimmed = sanitizeModelAnswer(retryBody.trim())
+      if (trimmed && !isGarbageModelOutput(trimmed) && hasSubstantiveAnalysis(trimmed, input.matchTitle)) {
+        fullAnswer = /^main:/i.test(trimmed) ? trimmed : `MAIN: ${trimmed}`
       }
     } catch {
       // Preview retry is best-effort.

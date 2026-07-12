@@ -74,31 +74,62 @@ const BOILERPLATE_RE = [
   /without (?:the |an? )?(?:outcome|odds|market) list/i,
 ]
 
-const THINK_OPEN_RE = /<<think>>|<<think>>/i
-const THINK_CLOSE_RE = /<<\/redacted_thinking>>|<\/think>/i
+const THINK_TAG = 'think'
+const THINK_OPEN_RE = new RegExp(`<${THINK_TAG}>|<<think>>`, 'i')
+const THINK_CLOSE_RE = new RegExp(`</${THINK_TAG}>|<<\\/redacted_thinking>>`, 'i')
+const THINK_TAG_FRAGMENT_RE = new RegExp(
+  `<(?:\\/?${THINK_TAG}(?:>|)?|<?<?redacted_thinking)?$`,
+  'i'
+)
 
 /** Strip Qwen thinking / chat-template noise from completed text. */
 export function sanitizeModelAnswer(text: string): string {
   return text
+    .replace(new RegExp(`[\\s\\S]*?</${THINK_TAG}>`, 'gi'), '')
     .replace(/<<think>>[\s\S]*?<<\/redacted_thinking>>/gi, '')
-    .replace(/[\s\S]*?<\/think>/gi, '')
+    .replace(new RegExp(`</?${THINK_TAG}>`, 'gi'), '')
     .replace(/<<\/?redacted_thinking>>/gi, '')
     .replace(/<\|im_start\|>[\s\S]*?<\|im_end\|>/gi, '')
     .trim()
+}
+
+function splitPartialThinkTag(pending: string): { emit: string; hold: string } {
+  const lastOpen = pending.lastIndexOf('<')
+  if (lastOpen === -1) return { emit: pending, hold: '' }
+  const tail = pending.slice(lastOpen)
+  if (THINK_TAG_FRAGMENT_RE.test(tail)) {
+    return { emit: pending.slice(0, lastOpen), hold: tail }
+  }
+  return { emit: pending, hold: '' }
+}
+
+export function hasThinkingNoise(text: string): boolean {
+  return new RegExp(`<${THINK_TAG}|<\\/think>|redacted_thinking`, 'i').test(text)
 }
 
 /** Incremental filter — drops thinking tokens before they reach the UI. */
 export function createStreamSanitizer() {
   let inThink = false
   let pending = ''
+  let held = ''
 
   function feed(chunk: string): string {
-    pending += chunk
+    pending = held + chunk
+    held = ''
     let emit = ''
 
     while (pending.length > 0) {
       if (inThink) {
         const closeMatch = pending.match(THINK_CLOSE_RE)
+        const answerBreak = pending.match(/(?:^|\n)(?:MAIN|HOME|AWAY):/i)
+        if (
+          answerBreak &&
+          answerBreak.index !== undefined &&
+          (!closeMatch || closeMatch.index === undefined || answerBreak.index < closeMatch.index)
+        ) {
+          inThink = false
+          continue
+        }
         if (!closeMatch || closeMatch.index === undefined) {
           pending = ''
           break
@@ -110,7 +141,9 @@ export function createStreamSanitizer() {
 
       const openMatch = pending.match(THINK_OPEN_RE)
       if (!openMatch || openMatch.index === undefined || openMatch[0].length === 0) {
-        emit += pending
+        const split = splitPartialThinkTag(pending)
+        emit += split.emit
+        held = split.hold
         pending = ''
         break
       }
@@ -120,10 +153,16 @@ export function createStreamSanitizer() {
       inThink = true
     }
 
-    return emit.replace(/<<\/?redacted_thinking>>/gi, '')
+    return emit
+      .replace(new RegExp(`</?${THINK_TAG}>`, 'gi'), '')
+      .replace(/<<\/?redacted_thinking>>/gi, '')
   }
 
-  return { feed }
+  function isThinking(): boolean {
+    return inThink || held.length > 0
+  }
+
+  return { feed, isThinking }
 }
 
 function isTemplateEcho(text: string): boolean {
@@ -160,13 +199,14 @@ export function isGarbageModelOutput(text: string): boolean {
   const t = sanitizeModelAnswer(text).trim()
   if (!t) return true
   if (/redacted_thinking/i.test(text)) return true
+  if (/<\/?think>/i.test(text)) return true
   if (isTemplateEcho(t)) return true
   if (BOILERPLATE_RE.some((re) => re.test(t))) return true
   return false
 }
 
 export const MODEL_REPLY_RULES =
-  'Reply with tagged lines only. No thinking blocks. No redacted_thinking tags. No placeholder text in angle brackets.'
+  'Reply with tagged lines only. No thinking blocks. No think XML tags. No redacted_thinking tags. No placeholder text in angle brackets.'
 
 const RAW_INTEL_RE = [
   /\[[\w.-]+\]/,
@@ -196,7 +236,7 @@ export function isRawIntelDump(text: string): boolean {
 function isUsableReason(text: string, matchTitle?: string): boolean {
   const t = text.trim()
   if (t.length < 12) return false
-  if (isBoilerplate(t) || isRawIntelDump(t)) return false
+  if (isBoilerplate(t) || isRawIntelDump(t) || isPromptInstructionEcho(t)) return false
   if (matchTitle && norm(stripMatchLeadIn(t, matchTitle)) === '') return false
   return true
 }
@@ -375,10 +415,95 @@ function extractPartialProse(answer: string, tag: string): string | null {
 
 /** Raw model output for the preview pass — no parsing, only hide pick structure lines. */
 export function formatRawAnalysisStream(answer: string): string {
-  return sanitizeModelAnswer(answer)
+  return stripPromptEchoLines(
+    sanitizeModelAnswer(answer)
+      .split('\n')
+      .filter((line) => !/^(PICK|MARKET\d*|ALT\d*):\s*/i.test(line.trim()))
+      .join('\n')
+      .trim()
+  )
+}
+
+/** Incremental preview while tokens arrive — no strict prose gates. */
+export function formatStreamingAnalysisDisplay(answer: string, matchTitle?: string): string {
+  let clean = sanitizeModelAnswer(answer)
+  if (!clean.trim()) return ''
+
+  clean = clean
     .split('\n')
-    .filter((line) => !/^(PICK|MARKET\d*|ALT\d*):\s*/i.test(line.trim()))
+    .filter((line) => !/^(PICK|MARKET\d*|ALT\d*|REASON\d*):\s*/i.test(line.trim()))
     .join('\n')
+
+  const sides = matchTitle ? parseTeamSides(matchTitle) : null
+  const parts: string[] = []
+
+  for (const spec of [
+    { tag: 'MAIN', prefix: '' },
+    { tag: 'HOME', prefix: sides ? `${sides.home}: ` : '' },
+    { tag: 'AWAY', prefix: sides ? `${sides.away}: ` : '' },
+  ] as const) {
+    const block = clean.match(
+      new RegExp(
+        `^${spec.tag}:\\s*([\\s\\S]*?)(?=^(?:MAIN|HOME|AWAY|REASON\\d*|PICK|MARKET\\d*|ALT\\d*):|$)`,
+        'im'
+      )
+    )
+    if (!block?.[1]) continue
+    let body = block[1]
+      .replace(/\n(?:MAIN|HOME|AWAY|REASON\d*|PICK|MARKET\d*|ALT\d*):?\s*$/i, '')
+      .trim()
+    if (!body || isPromptInstructionEcho(body)) continue
+    parts.push(`${spec.prefix}${body}`)
+  }
+
+  if (parts.length > 0) return parts.join('\n\n')
+
+  const tail = clean.replace(/^MAIN:\s*/i, '').trim()
+  if (!tail || isPromptInstructionEcho(tail)) return ''
+  if (/^(HOME|AWAY|REASON\d*|PICK|MARKET|ALT\d*):/i.test(tail)) return ''
+  return tail.replace(/\n(?:HOME|AWAY|REASON\d*):[\s\S]*$/i, '').trim()
+}
+
+/** Bettor-facing analysis in the sheet — prose only, no tags or prompt echoes. */
+export function formatAnalysisStreamDisplay(answer: string, matchTitle?: string): string {
+  const stripped = formatRawAnalysisStream(answer)
+  if (!stripped) return ''
+
+  const commentary = parseCommentary(stripped, matchTitle)
+  const partial = parsePreviewSectionsPartial(stripped, matchTitle)
+  const sides = matchTitle ? parseTeamSides(matchTitle) : null
+  const parts: string[] = []
+
+  const main = commentary.main ?? partial.main
+  const home = commentary.homeForm ?? partial.homeForm
+  const away = commentary.awayForm ?? partial.awayForm
+
+  if (main) parts.push(main)
+
+  if (home || away) {
+    const form: string[] = []
+    if (home) form.push(`${sides?.home ?? 'Home'}: ${home}`)
+    if (away) form.push(`${sides?.away ?? 'Away'}: ${away}`)
+    parts.push(form.join('\n\n'))
+  }
+
+  if (parts.length > 0) return parts.join('\n\n')
+
+  return stripped
+    .split('\n')
+    .map((line) => {
+      const match = line.match(/^(MAIN|HOME|AWAY|REASON\d*):\s*(.+)$/i)
+      if (!match) return line.trim()
+      const [, tag, value] = match
+      if (isPromptInstructionEcho(value)) return ''
+      const upper = tag.toUpperCase()
+      if (upper === 'HOME') return `${sides?.home ?? 'Home'}: ${value}`
+      if (upper === 'AWAY') return `${sides?.away ?? 'Away'}: ${value}`
+      if (upper.startsWith('REASON')) return ''
+      return value
+    })
+    .filter(Boolean)
+    .join('\n\n')
     .trim()
 }
 
@@ -414,7 +539,7 @@ export function attachReasonsToPicks(
 
   return picks.map((pick) => {
     const tagged = reasonByRank[pick.rank]
-    if (!tagged || !isUsableReason(tagged, matchTitle)) {
+    if (!tagged || !isUsableReason(tagged, matchTitle) || isPromptInstructionEcho(tagged)) {
       return { ...pick, reason: null }
     }
     if (isNearDuplicateText(tagged, mainText)) {
@@ -542,13 +667,9 @@ export function buildAnalysisDisplayText(
     parts.push(form.join('\n\n'))
   }
 
-  if (commentary.reasons.length > 0) {
-    parts.push(commentary.reasons.map((r, i) => `Play ${i + 1}: ${r}`).join('\n\n'))
-  }
-
   if (parts.length > 0) return parts.join('\n\n')
 
-  const draft = formatLivePreviewDraft(answer)
+  const draft = formatAnalysisStreamDisplay(answer, matchTitle)
   if (draft && !isTitleOnlyMain(draft, matchTitle)) return draft
 
   const intel = scoutIntel?.trim()
@@ -589,8 +710,7 @@ export function buildPickMotivationText(
 
 export function hasSubstantiveAnalysis(answer: string, matchTitle?: string): boolean {
   const commentary = parseCommentary(answer, matchTitle)
-  if (commentary.main || commentary.homeForm || commentary.awayForm) return true
-  return commentary.reasons.length > 0
+  return Boolean(commentary.main || commentary.homeForm || commentary.awayForm)
 }
 
 export type TranslatableAnalysis = {

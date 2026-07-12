@@ -2,6 +2,7 @@ import { EventCard } from '@/components/bet/event-card'
 import { CompetitionBadge } from '@/components/bet/competition-badge'
 import { CompetitionSidebar } from '@/components/bet/competition-sidebar'
 import { BrandHeader } from '@/components/ui/brand-header'
+import { MatchCardSkeleton } from '@/components/ui/skeleton'
 import { ScreenBackdrop } from '@/components/ui/screen-backdrop'
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
@@ -361,8 +362,12 @@ export function BetHomeScreen() {
       </View>
 
       {isLoading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator color={colors.primary} size="large" />
+        <View style={styles.skeletonList}>
+          <MatchCardSkeleton compact />
+          <MatchCardSkeleton compact />
+          <MatchCardSkeleton compact />
+          <MatchCardSkeleton compact />
+          <MatchCardSkeleton compact />
         </View>
       ) : (
         <FlatList
@@ -480,6 +485,11 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  skeletonList: {
+    paddingHorizontal: theme.spacing.lg,
+    gap: 8,
+    paddingTop: 8,
   },
   errorTitle: {
     color: colors.danger,

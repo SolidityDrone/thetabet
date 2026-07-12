@@ -21,6 +21,7 @@ import {
   type VaultBetPlacementStage,
 } from '@/services/azuro/vault-bet-placement'
 import { saveLocalBet } from '@/services/azuro/bet-history'
+import { EventPageSkeleton } from '@/components/ui/skeleton'
 import { MatchAiSheet } from '@/components/ai/match-ai-sheet'
 import { TipsterMatchNotesPanel } from '@/components/tipster/tipster-match-notes-panel'
 import { loadQvacSettings, QVAC_MODEL_OPTIONS } from '@/services/qvac/qvac-settings'
@@ -363,9 +364,9 @@ export default function BetEventScreen() {
       </View>
 
       {isLoading && !game ? (
-        <View style={styles.centered}>
-          <ActivityIndicator color={colors.primary} size="large" />
-        </View>
+        <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 }]}>
+          <EventPageSkeleton />
+        </ScrollView>
       ) : (
         <>
           <ScrollView

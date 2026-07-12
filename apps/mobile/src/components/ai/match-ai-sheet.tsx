@@ -11,7 +11,9 @@ import { useInferenceKeepAwake } from '@/services/keep-awake'
 import {
   attachReasonsToPicks,
   buildOutcomeCatalog,
-  formatRawAnalysisStream,
+  formatAnalysisStreamDisplay,
+  formatStreamingAnalysisDisplay,
+  hasThinkingNoise,
   parsePickSuggestions,
   type MatchMarketInput,
   type MatchPickSuggestion,
@@ -123,14 +125,25 @@ export function MatchAiSheet({
     () => attachReasonsToPicks(answer, suggestions, matchTitle),
     [answer, suggestions, matchTitle]
   )
-  const rawAnalysis = useMemo(() => formatRawAnalysisStream(answer), [answer])
+  const rawAnalysis = useMemo(
+    () =>
+      streaming
+        ? formatStreamingAnalysisDisplay(answer, matchTitle)
+        : formatAnalysisStreamDisplay(answer, matchTitle),
+    [answer, matchTitle, streaming]
+  )
+  const hasAnalysisText = rawAnalysis.trim().length > 0
+  const reasoningHidden =
+    streaming &&
+    !hasAnalysisText &&
+    (hasThinkingNoise(answer) || activity?.toLowerCase().includes('reasoning (hidden)'))
   const copyableText = useMemo(() => rawAnalysis.trim(), [rawAnalysis])
   const showAnalysis = streaming || stage === 'done'
   const showPicks = !streaming && picksWithReasons.length > 0
   const [synthesisWaitSec, setSynthesisWaitSec] = useState(0)
 
   useEffect(() => {
-    if (stage !== 'synthesis' || answer.length > 0) {
+    if (stage !== 'synthesis' || hasAnalysisText) {
       setSynthesisWaitSec(0)
       return
     }
@@ -139,7 +152,7 @@ export function MatchAiSheet({
     tick()
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
-  }, [stage, answer.length])
+  }, [stage, hasAnalysisText])
 
   const setLockedPicks = (picks: MatchPickSuggestion[]) => {
     if (picks.length === 0) return
@@ -683,16 +696,18 @@ export function MatchAiSheet({
                 ) : null}
               </View>
 
-              {streaming && !answer ? (
+              {streaming && !hasAnalysisText ? (
                 <Text style={styles.analysisPending}>
-                  {activity ?? 'Waiting for first token…'}
+                  {reasoningHidden
+                    ? `${activity ?? 'Model reasoning (hidden)…'}\nAnalysis text will appear after reasoning finishes.`
+                    : (activity ?? 'Waiting for first token…')}
                   {synthesisWaitSec > 0
                     ? `\nCPU inference can take 30–90s on first token (${synthesisWaitSec}s).`
                     : ''}
                 </Text>
               ) : (
                 <Text style={styles.streamText} selectable>
-                  {rawAnalysis || answer}
+                  {rawAnalysis}
                   {streaming ? <Text style={styles.cursor}>▍</Text> : null}
                 </Text>
               )}

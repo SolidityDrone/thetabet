@@ -10,9 +10,9 @@ import useWalletAvatar from '@/hooks/use-wallet-avatar';
 import { useWallet } from '@tetherto/wdk-react-native-provider';
 import * as Clipboard from 'expo-clipboard';
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation';
-import { ChevronDown, Copy, Camera, ImagePlus, Info, Shield, Trash2, Wallet } from 'lucide-react-native';
+import { ChevronDown, Copy, Camera, ImagePlus, Info, Radio, Shield, Trash2, Wallet } from 'lucide-react-native';
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { toast } from 'sonner-native';
 import { colors } from '@/constants/colors';
@@ -44,6 +44,11 @@ import {
   isTranslationModelInstalled,
   requiresTranslationModel,
 } from '@/services/qvac/qvac-translation-models'
+import {
+  downloadSttModel,
+  getSttModelSizeLabel,
+  isSttModelInstalled,
+} from '@/services/qvac/qvac-stt-models'
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const router = useDebouncedNavigation();
@@ -51,7 +56,13 @@ export default function SettingsScreen() {
   const { wallet, clearWallet } = useWallet();
   const { address: polygonAddress, shortAddress: polygonShortAddress } = useThetaWalletAddress();
   const avatar = useWalletAvatar();
-  const { identity: chatIdentity, setChatAvatar } = usePearChat()
+  const {
+    identity: chatIdentity,
+    setChatAvatar,
+    inferenceOptIn,
+    inferenceStatus,
+    setInferenceOptIn,
+  } = usePearChat()
   const [uploadingChatAvatar, setUploadingChatAvatar] = React.useState(false)
   const [avatarCameraVisible, setAvatarCameraVisible] = React.useState(false)
 
@@ -100,14 +111,23 @@ export default function SettingsScreen() {
   const [translationInstalled, setTranslationInstalled] = React.useState<boolean | null>(null)
   const [downloading, setDownloading] = React.useState(false)
   const [downloadingTranslation, setDownloadingTranslation] = React.useState(false)
+  const [downloadingStt, setDownloadingStt] = React.useState(false)
   const [downloadPct, setDownloadPct] = React.useState<number | null>(null)
   const [translationDownloadPct, setTranslationDownloadPct] = React.useState<number | null>(null)
+  const [sttDownloadPct, setSttDownloadPct] = React.useState<number | null>(null)
+  const [sttInstalled, setSttInstalled] = React.useState<boolean | null>(null)
   const [languagePickerVisible, setLanguagePickerVisible] = React.useState(false)
   const [translationInstallByLang, setTranslationInstallByLang] = React.useState<
     Partial<Record<QvacOutputLanguage, boolean>>
   >({ en: true })
   React.useEffect(() => {
     loadQvacSettings().then(setQvac).catch(() => setQvac(null))
+  }, [])
+
+  React.useEffect(() => {
+    isSttModelInstalled()
+      .then(setSttInstalled)
+      .catch(() => setSttInstalled(false))
   }, [])
 
   React.useEffect(() => {
@@ -157,6 +177,27 @@ export default function SettingsScreen() {
     }
   }
 
+  const handleDownloadSttModel = async () => {
+    if (downloadingStt) return
+
+    setDownloadingStt(true)
+    setSttDownloadPct(0)
+    try {
+      await downloadSttModel((progress) => {
+        setSttDownloadPct(progress.percentage)
+      })
+      setSttInstalled(true)
+      toast.success('Speech-to-text model downloaded')
+    } catch (error) {
+      console.error('Speech model download failed:', error)
+      const msg = error instanceof Error ? error.message : String(error)
+      toast.error(msg || 'Speech model download failed')
+    } finally {
+      setDownloadingStt(false)
+      setSttDownloadPct(null)
+    }
+  }
+
   const handleDownloadModel = async () => {
     if (!qvac || downloading) return
 
@@ -182,6 +223,15 @@ export default function SettingsScreen() {
     } finally {
       setDownloading(false)
       setDownloadPct(null)
+    }
+  }
+
+  const handleInferenceOptIn = async (enabled: boolean) => {
+    try {
+      await setInferenceOptIn(enabled)
+      toast.success(enabled ? 'Peer inference is available while this app is open' : 'Peer inference disabled')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
     }
   }
 
@@ -216,7 +266,7 @@ export default function SettingsScreen() {
   const ctxLimits = qvac ? getCtxLimitsForPreset(qvac.modelPreset) : QVAC_CTX_LIMITS
 
   const handleModelSelect = async (preset: QvacUserSettings['modelPreset']) => {
-    if (!qvac || downloading) return
+    if (!qvac || downloading || downloadingStt) return
     const limits = getCtxLimitsForPreset(preset)
     const next = {
       ...qvac,
@@ -240,7 +290,7 @@ export default function SettingsScreen() {
   }
 
   const handleLanguageSelect = async (outputLanguage: QvacOutputLanguage) => {
-    if (!qvac || downloading || downloadingTranslation) return
+    if (!qvac || downloading || downloadingTranslation || downloadingStt) return
     const next = { ...qvac, outputLanguage }
     setQvac(next)
     await saveQvacSettings(next)
@@ -264,7 +314,7 @@ export default function SettingsScreen() {
   const selectedLang =
     QVAC_OUTPUT_LANGUAGE_OPTIONS.find((o) => o.code === qvac?.outputLanguage) ?? null
   const translationReady = !needsTranslation || translationInstalled === true
-  const canPickLanguage = !downloading && !downloadingTranslation
+  const canPickLanguage = !downloading && !downloadingTranslation && !downloadingStt
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -401,6 +451,27 @@ export default function SettingsScreen() {
             <Text style={styles.sectionTitle}>Local AI (QVAC)</Text>
           </View>
           <View style={styles.infoCard}>
+            <View style={[styles.infoRow, styles.peerInferenceRow]}>
+              <View style={styles.peerInferenceCopy}>
+                <View style={styles.peerInferenceTitle}>
+                  <Radio size={16} color={inferenceOptIn ? colors.primary : colors.textSecondary} />
+                  <Text style={styles.infoLabel}>Offer peer inference</Text>
+                </View>
+                <Text style={styles.downloadHint}>
+                  Opt in to answer public match-analysis requests on this phone. Your private notes
+                  stay here and only the finished analysis and picks are returned.
+                </Text>
+                <Text style={styles.cpuHint}>
+                  Status: {inferenceOptIn ? inferenceStatus?.status ?? 'connecting' : 'offline'}
+                </Text>
+              </View>
+              <Switch
+                value={inferenceOptIn}
+                onValueChange={(enabled) => void handleInferenceOptIn(enabled)}
+                trackColor={{ false: colors.borderLight, true: colors.primaryDim }}
+                thumbColor={inferenceOptIn ? colors.primary : colors.textSecondary}
+              />
+            </View>
             <View style={styles.aiModelRow}>
               <Text style={styles.infoLabel}>Model</Text>
               <View style={styles.modelPills}>
@@ -532,6 +603,35 @@ export default function SettingsScreen() {
                     </Text>
                   </View>
                   <ChevronDown size={18} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={[styles.infoRow, styles.ctxRow, styles.translationSection]}>
+              <Text style={styles.infoLabel}>Speech-to-text (CPU)</Text>
+              <Text style={styles.downloadHint}>
+                Whisper Tiny for Speak buttons on tipster notes. {getSttModelSizeLabel()} · CPU only.
+              </Text>
+              <View style={styles.aiDownloadRow}>
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={styles.downloadStatus}>
+                    {downloadingStt
+                      ? `Downloading… ${Math.round(sttDownloadPct ?? 0)}%`
+                      : sttInstalled
+                        ? 'Ready on this device'
+                        : 'Required for Speak on note fields'}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.downloadButton,
+                    (downloadingStt || sttInstalled) && styles.downloadButtonDisabled,
+                  ]}
+                  onPress={handleDownloadSttModel}
+                  disabled={downloadingStt || sttInstalled === true}
+                >
+                  <Text style={styles.downloadButtonText}>
+                    {downloadingStt ? 'Downloading' : sttInstalled ? 'Installed' : 'Download'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -675,6 +775,22 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: colors.borderDark,
+  },
+  peerInferenceRow: {
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderDark,
+  },
+  peerInferenceCopy: {
+    flex: 1,
+    gap: 5,
+  },
+  peerInferenceTitle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
   },
   translationStep: {
     color: colors.text,

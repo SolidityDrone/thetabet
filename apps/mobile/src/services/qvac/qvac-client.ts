@@ -13,11 +13,51 @@ import { loadQvacSettings, type QvacModelPreset } from '@/services/qvac/qvac-set
 
 export const QVAC_INFERENCE_MODE = 'cpu-only' as const
 
+const LOAD_MODEL_TIMEOUT_MS = 240_000
+const FIRST_TOKEN_TIMEOUT_MS = 180_000
+const STREAM_IDLE_TIMEOUT_MS = 120_000
+
+function timeoutError(label: string, timeoutMs: number) {
+  const sec = Math.round(timeoutMs / 1000)
+  return new Error(`${label} timed out after ${sec}s. Force-close the app, reload Metro, and try again.`)
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(timeoutError(label, timeoutMs)), timeoutMs)
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
+
+async function nextEventWithTimeout<T>(
+  iterator: AsyncIterator<T>,
+  timeoutMs: number,
+  label: string
+): Promise<IteratorResult<T>> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      iterator.next(),
+      new Promise<IteratorResult<T>>((_, reject) => {
+        timer = setTimeout(() => reject(timeoutError(label, timeoutMs)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 /** CPU-only llamacpp config — never use GPU/Vulkan on Android (crashes on many devices). */
 export function buildCpuModelConfig(ctxSize: number) {
   return {
     ctx_size: ctxSize,
     verbosity: VERBOSITY.ERROR,
+    // Force CPU-only — Vulkan half-initializes on many Android GPUs and segfaults.
     device: 'cpu',
     gpu_layers: 0,
     'split-mode': 'none' as const,
@@ -44,17 +84,29 @@ async function ensureModelLoaded(preset: QvacModelPreset, ctxSize: number) {
   }
 
   try {
-    modelId = await loadModel({
-      modelSrc: entry.src,
-      modelType: 'llm',
-      modelConfig: buildCpuModelConfig(ctxSize),
-    })
+    modelId = await withTimeout(
+      loadModel({
+        modelSrc: entry.src,
+        modelType: 'llm',
+        modelConfig: buildCpuModelConfig(ctxSize),
+      }),
+      LOAD_MODEL_TIMEOUT_MS,
+      'Model load'
+    )
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     if (msg.toLowerCase().includes('no plugin') || msg.toLowerCase().includes('not supported')) {
       throw new Error(
         'QVAC inference engine is not loaded. Re-run `npm run bundle:qvac` to build the full AI worker bundle, then restart the app.'
       )
+    }
+    if (msg.includes('ADDON_NOT_FOUND') && msg.includes('llm-llamacpp')) {
+      throw new Error(
+        'LLM native addon failed to load. Re-run `npm run bundle:qvac && npm run link:bare`, rebuild the debug APK, reinstall, force-close the app, then reopen.'
+      )
+    }
+    if (msg.includes('QVAC worker bundle changed')) {
+      throw error instanceof Error ? error : new Error(msg)
     }
     throw error
   }
@@ -146,7 +198,13 @@ export async function* streamCompletion(
     if (opts.assistantPrefix) {
       yield opts.assistantPrefix
     }
-    for await (const event of run.events) {
+    const iterator = run.events[Symbol.asyncIterator]()
+    let gotContent = false
+    while (true) {
+      const timeoutMs = gotContent ? STREAM_IDLE_TIMEOUT_MS : FIRST_TOKEN_TIMEOUT_MS
+      const label = gotContent ? 'Inference stream' : 'Model first token'
+      const { done, value: event } = await nextEventWithTimeout(iterator, timeoutMs, label)
+      if (done) break
       if (opts.signal?.aborted) {
         await cancelQvacInference(run.requestId)
         return
@@ -156,6 +214,7 @@ export async function* streamCompletion(
         if (err) throw new Error(err)
       }
       if (event.type === 'contentDelta' && event.text) {
+        gotContent = true
         yield event.text
       }
     }

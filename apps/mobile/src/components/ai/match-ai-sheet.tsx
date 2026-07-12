@@ -1,10 +1,12 @@
 import { ScoutStatusStrip } from '@/components/ai/scout-status-strip'
 import { ScoutWebStrip, type ScoutWebVisit } from '@/components/ai/scout-web-strip'
 import { SiteFavicon } from '@/components/ai/site-favicon'
+import { ChatAvatar } from '@/components/pear/chat-avatar'
 import { BottomSheetModal, SheetActions } from '@/components/ui/bottom-sheet-modal'
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation'
+import { usePearChat } from '@/context/pear-chat'
 import { useInferenceKeepAwake } from '@/services/keep-awake'
 import {
   attachReasonsToPicks,
@@ -20,9 +22,14 @@ import {
 } from '@/services/qvac/match-scout-cache'
 import { runMatchScout, type MatchDossier, type ScoutId, type ScoutResult } from '@/services/qvac/match-scout'
 import { cancelQvacInference, unloadQvacModel } from '@/services/qvac/qvac-client'
+import {
+  acquireInference,
+  releaseInference,
+} from '@/services/qvac/inference-coordinator'
 import { isQvacModelMarkedInstalled } from '@/services/qvac/qvac-model-manager'
 import { loadQvacSettings } from '@/services/qvac/qvac-settings'
-import { ChevronRight, Copy, Sparkles } from 'lucide-react-native'
+import { buildTipsterHintsPrompt } from '@/services/tipster-notes/storage'
+import { ChevronRight, Copy } from 'lucide-react-native'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as Clipboard from 'expo-clipboard'
 import { toast } from 'sonner-native'
@@ -34,6 +41,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
+import type { PeerInferencePeer } from '@/types/pear'
 
 type Props = {
   visible: boolean
@@ -43,6 +51,7 @@ type Props = {
   startsAt?: string | null
   league?: string | null
   markets: MatchMarketInput[]
+  ownerId?: string | null
   onApplyPick?: (pick: MatchPickSuggestion) => void
 }
 
@@ -69,9 +78,16 @@ export function MatchAiSheet({
   startsAt,
   league,
   markets,
+  ownerId,
   onApplyPick,
 }: Props) {
   const router = useDebouncedNavigation()
+  const {
+    listInferencePeers,
+    requestPeerInference,
+    cancelPeerInference,
+    onInferenceEvent,
+  } = usePearChat()
   const catalog = useMemo(() => buildOutcomeCatalog(markets), [markets])
 
   const [stage, setStage] = useState<Stage>('idle')
@@ -93,6 +109,11 @@ export function MatchAiSheet({
   const pendingAnswerRef = useRef('')
   const lockedPicksRef = useRef<MatchPickSuggestion[]>([])
   const scrollRef = useRef<ScrollView>(null)
+  const remoteRequestIdRef = useRef<string | null>(null)
+  const [peers, setPeers] = useState<PeerInferencePeer[]>([])
+  const [browsingPeers, setBrowsingPeers] = useState(false)
+  const [peerBrowserOpen, setPeerBrowserOpen] = useState(false)
+  const [remoteProvider, setRemoteProvider] = useState<PeerInferencePeer | null>(null)
 
   const busy = stage === 'loading-model' || stage === 'web' || stage === 'synthesis'
   const streaming = stage === 'synthesis'
@@ -133,6 +154,13 @@ export function MatchAiSheet({
 
   const stopRun = async (unloadModel = false) => {
     abortRef.current?.abort()
+    const remoteRequestId = remoteRequestIdRef.current
+    remoteRequestIdRef.current = null
+    if (remoteRequestId) {
+      try {
+        await cancelPeerInference(remoteRequestId)
+      } catch {}
+    }
     try {
       await cancelQvacInference()
     } catch {
@@ -146,6 +174,7 @@ export function MatchAiSheet({
       }
     }
     runningRef.current = false
+    releaseInference('local')
   }
 
   const trackWebVisit = (site: string, url: string) => {
@@ -222,6 +251,8 @@ export function MatchAiSheet({
     void stopRun(true)
     setStage('idle')
     setCachedAt(null)
+    setPeerBrowserOpen(false)
+    setRemoteProvider(null)
     resetRunState()
   }, [visible])
 
@@ -255,9 +286,13 @@ export function MatchAiSheet({
       setError('Markets are still loading — wait for odds on the page, then try again.')
       return
     }
+    await stopRun(false)
+    if (!acquireInference('local')) {
+      toast.error('The inference engine is already busy')
+      return
+    }
     runningRef.current = true
     runEpochRef.current += 1
-    await stopRun(false)
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -278,8 +313,15 @@ export function MatchAiSheet({
         return
       }
 
+      const tipsterHintsBlock = ownerId
+        ? await buildTipsterHintsPrompt(ownerId, { gameId, matchTitle, league })
+        : ''
+      if (tipsterHintsBlock) {
+        setActivity('Tipster hints loaded — scouting web…')
+      }
+
       for await (const event of runMatchScout(
-        { matchTitle, startsAt, league, markets },
+        { gameId, matchTitle, startsAt, league, markets, tipsterHintsBlock },
         { signal: controller.signal }
       )) {
         if (controller.signal.aborted) return
@@ -383,8 +425,110 @@ export function MatchAiSheet({
     } finally {
       runningRef.current = false
       abortRef.current = null
+      releaseInference('local')
     }
   }
+
+  const browsePeers = async () => {
+    if (browsingPeers) return
+    if (stage !== 'idle') {
+      resetRunState()
+      setCachedAt(null)
+      setStage('idle')
+    }
+    setPeerBrowserOpen(true)
+    setBrowsingPeers(true)
+    setError(null)
+    try {
+      setPeers(await listInferencePeers())
+    } catch (browseError) {
+      setPeers([])
+      setError(browseError instanceof Error ? browseError.message : String(browseError))
+    } finally {
+      setBrowsingPeers(false)
+    }
+  }
+
+  const runWithPeer = async (peer: PeerInferencePeer) => {
+    if (runningRef.current || peer.status !== 'available') return
+    if (!catalog.length) {
+      setStage('error')
+      setError('Markets are still loading — wait for odds on the page, then try again.')
+      return
+    }
+
+    await stopRun(false)
+    if (!acquireInference('local')) {
+      toast.error('The inference engine is already busy')
+      return
+    }
+
+    runningRef.current = true
+    setPeerBrowserOpen(false)
+    setRemoteProvider(peer)
+    setCachedAt(null)
+    resetRunState()
+    setStage('loading-model')
+    setActivity(`Connecting to ${peer.handle ? `@${peer.handle}` : peer.pubkey.slice(0, 8)}…`)
+
+    try {
+      const accepted = await requestPeerInference(peer.pubkey, {
+        gameId,
+        matchTitle,
+        startsAt,
+        league,
+        markets,
+      })
+      remoteRequestIdRef.current = accepted.requestId
+      setRemoteProvider(accepted.provider ?? peer)
+      setStage('web')
+      setActivity('Peer accepted · running scouts with their notes…')
+    } catch (requestError) {
+      runningRef.current = false
+      releaseInference('local')
+      setStage('error')
+      setError(requestError instanceof Error ? requestError.message : String(requestError))
+    }
+  }
+
+  useEffect(() => {
+    return onInferenceEvent((event) => {
+      if (!remoteRequestIdRef.current || event.requestId !== remoteRequestIdRef.current) return
+
+      if (event.type === 'progress') {
+        if (event.stage === 'synthesis') setStage('synthesis')
+        else if (event.stage === 'web') setStage('web')
+        else setStage('loading-model')
+        setActivity(event.message ?? 'Peer is working…')
+        return
+      }
+
+      remoteRequestIdRef.current = null
+      runningRef.current = false
+      releaseInference('local')
+
+      if (event.type === 'error') {
+        setStage('error')
+        setError(event.message)
+        return
+      }
+
+      const { dossier: peerDossier, answer: peerAnswer, suggestions: peerPicks } = event.result
+      setDossier(peerDossier)
+      setAnswer(peerAnswer)
+      pendingAnswerRef.current = peerAnswer
+      lockedPicksRef.current = peerPicks
+      setSuggestions(peerPicks)
+      setResults(
+        Object.fromEntries(peerDossier.scouts.map((result) => [result.id, result])) as Partial<
+          Record<ScoutId, ScoutResult>
+        >
+      )
+      setStage('done')
+      setActivity(null)
+      void persistReport(peerDossier, peerAnswer, peerPicks)
+    })
+  }, [onInferenceEvent])
 
   const handleCopyPreview = async () => {
     if (!copyableText) return
@@ -413,7 +557,7 @@ export function MatchAiSheet({
     <BottomSheetModal
       visible={visible}
       onClose={handleClose}
-      title={`Hints · ${matchTitle}`}
+      title={`AI · ${matchTitle}`}
       cardStyle={styles.sheetCard}
     >
       <View style={styles.sheetContent}>
@@ -442,9 +586,60 @@ export function MatchAiSheet({
           keyboardShouldPersistTaps="handled"
         >
           {stage === 'idle' ? (
-            <Text style={styles.hint}>
-              Hints gather intel, then on-device AI writes a tipster-style preview with picks.
-            </Text>
+            <View style={styles.sourceChooser}>
+              <Text style={styles.hint}>
+                Choose where the match analysis is computed.
+              </Text>
+              <TouchableOpacity style={styles.sourceCard} onPress={() => void run()}>
+                <Text style={styles.sourceTitle}>Self inference</Text>
+                <Text style={styles.sourceHint}>
+                  Run scouts and your private tipster notes on this phone.
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.sourceCard} onPress={() => void browsePeers()}>
+                <View style={styles.sourceTitleRow}>
+                  <Text style={styles.sourceTitle}>Browse peers</Text>
+                  {browsingPeers ? <ActivityIndicator size="small" color={colors.primary} /> : null}
+                </View>
+                <Text style={styles.sourceHint}>
+                  Ask an opted-in peer to run their scouts and their notes, then return picks.
+                </Text>
+              </TouchableOpacity>
+
+              {peerBrowserOpen ? (
+                <View style={styles.peerList}>
+                  <View style={styles.sourceTitleRow}>
+                    <Text style={styles.sectionLabel}>Public inference peers</Text>
+                    <TouchableOpacity onPress={() => void browsePeers()} disabled={browsingPeers}>
+                      <Text style={styles.refreshPeers}>Refresh</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {!browsingPeers && peers.length === 0 ? (
+                    <Text style={styles.sourceHint}>No opted-in peers found. Try again shortly.</Text>
+                  ) : null}
+                  {peers.map((peer) => (
+                    <TouchableOpacity
+                      key={peer.pubkey}
+                      style={[styles.peerRow, peer.status === 'busy' && styles.peerRowBusy]}
+                      disabled={peer.status !== 'available'}
+                      onPress={() => void runWithPeer(peer)}
+                    >
+                      <ChatAvatar avatarData={peer.avatarData} size={30} />
+                      <View style={styles.peerCopy}>
+                        <Text style={styles.peerName}>
+                          {peer.handle ? `@${peer.handle}` : `Peer ${peer.pubkey.slice(0, 8)}`}
+                        </Text>
+                        <Text style={styles.peerStatus}>{peer.status}</Text>
+                      </View>
+                      <ChevronRight
+                        size={16}
+                        color={peer.status === 'available' ? colors.primary : colors.textTertiary}
+                      />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+            </View>
           ) : null}
 
           {stage === 'error' ? (
@@ -471,7 +666,11 @@ export function MatchAiSheet({
           {showAnalysis ? (
             <View style={styles.analysisBox}>
               <View style={styles.analysisHeader}>
-                <Text style={styles.sectionLabel}>Analysis</Text>
+                <Text style={styles.sectionLabel}>
+                  {remoteProvider
+                    ? `Analysis by ${remoteProvider.handle ? `@${remoteProvider.handle}` : remoteProvider.pubkey.slice(0, 8)}`
+                    : 'Analysis'}
+                </Text>
                 {copyableText ? (
                   <TouchableOpacity
                     style={styles.copyBtn}
@@ -543,9 +742,20 @@ export function MatchAiSheet({
           onCancel={handleClose}
           cancelLabel="Close"
           onConfirm={run}
-          confirmLabel={hasCachedReport || stage === 'done' ? 'Refresh' : 'Run AI Analysis'}
+          confirmLabel={
+            stage === 'idle'
+              ? 'Self inference'
+              : hasCachedReport || stage === 'done'
+                ? 'Refresh locally'
+                : 'Run AI Analysis'
+          }
           confirmDisabled={busy}
         >
+          {!busy ? (
+            <TouchableOpacity style={styles.stopBtn} onPress={() => void browsePeers()}>
+              <Text style={styles.stopBtnText}>Browse peers</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity style={styles.stopBtn} onPress={handleStop} disabled={!busy}>
             <Text style={styles.stopBtnText}>Stop</Text>
           </TouchableOpacity>
@@ -591,6 +801,74 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 11,
     lineHeight: 15,
+  },
+  sourceChooser: {
+    gap: 10,
+  },
+  sourceCard: {
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.cardDark,
+    padding: 12,
+    gap: 4,
+  },
+  sourceTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  sourceTitle: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  sourceHint: {
+    color: colors.textTertiary,
+    fontSize: 10,
+    lineHeight: 15,
+  },
+  peerList: {
+    gap: 7,
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 10,
+  },
+  refreshPeers: {
+    color: colors.primary,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  peerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    borderRadius: theme.radius.sm,
+    backgroundColor: colors.cardDark,
+    borderWidth: 1,
+    borderColor: colors.borderNeon,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  peerRowBusy: {
+    opacity: 0.5,
+    borderColor: colors.border,
+  },
+  peerCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  peerName: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  peerStatus: {
+    color: colors.textTertiary,
+    fontSize: 9,
+    textTransform: 'uppercase',
   },
   sectionLabel: {
     color: colors.textTertiary,

@@ -5,7 +5,7 @@
 [![Demo video](https://img.youtube.com/vi/EOCiyINNVZA/0.jpg)](https://youtu.be/EOCiyINNVZA)
 
 > **DoraHacks submission** — opted in for tracks **QVAC**, **WDK**, and **PEAR**.  
-> [View on DoraHacks](https://dorahacks.io/) · [Technical specification](./SPEC.md)
+> [View on DoraHacks](https://dorahacks.io/)
 
 ---
 
@@ -541,8 +541,6 @@ MIT
 
 ## References
 
-- [Technical specification](./SPEC.md)
-- [To-do list](./To-Do-List.md)
 - [Pear docs](https://docs.pears.com)
 - [WDK docs](https://docs.wdk.tether.io)
 - [Azuro Protocol](https://gem.azuro.org)

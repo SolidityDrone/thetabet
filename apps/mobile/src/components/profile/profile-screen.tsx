@@ -9,7 +9,8 @@ import { formatTipsterHandle, useProfileVaults, vaultStatsSummary } from '@/hook
 import { useVaultInvestorChat } from '@/hooks/use-vault-investor-chat'
 import { createTipsterVault, registerTipsterName } from '@/services/theta-vault'
 import { isThetaDeployed, THETA_SINGLETON_ADDRESS } from '@/config/theta'
-import { RefreshCw, TrendingUp, MessageCircle } from 'lucide-react-native'
+import { TipsterThesisPanel } from '@/components/tipster/tipster-thesis-panel'
+import { MessageCircle, RefreshCw, TrendingUp } from 'lucide-react-native'
 import { useCallback, useState } from 'react'
 import {
   ActivityIndicator,
@@ -256,6 +257,7 @@ export function ProfileScreen() {
             </Text>
           </View>
           {tipsterVault ? <VaultStatsCard title="Your tipster vault" vault={tipsterVault} /> : null}
+          {isTipster && address ? <TipsterThesisPanel ownerId={address} /> : null}
           {tipsterVault ? (
             <Pressable
               style={[styles.chatButton, (!chatReady || vaultChatBusy) && styles.buttonDisabled]}

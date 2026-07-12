@@ -1,6 +1,7 @@
 import RPC from 'bare-rpc'
 import { PearChat } from './chat.mjs'
 import { COMMANDS } from './commands.mjs'
+import { PeerInference } from './peer-inference.mjs'
 
 const { IPC } = BareKit
 
@@ -10,6 +11,7 @@ if (!storagePath) {
 }
 
 let chat = null
+let peerInference = null
 let rpc = null
 let chatBoot = null
 
@@ -39,6 +41,28 @@ async function ensureChat () {
 
     await instance.ready
     chat = instance
+    peerInference = new PeerInference(instance, {
+      onProviderRequest: (request) => {
+        if (!rpc) return
+        const event = rpc.request(COMMANDS.INFERENCE_PROVIDER_REQUEST_EVENT)
+        event.send(Buffer.from(JSON.stringify({ type: 'request', ...request })))
+      },
+      onProviderCancel: ({ requestId }) => {
+        if (!rpc) return
+        const event = rpc.request(COMMANDS.INFERENCE_PROVIDER_REQUEST_EVENT)
+        event.send(Buffer.from(JSON.stringify({ type: 'cancel', requestId })))
+      },
+      onRequesterEvent: (payload) => {
+        if (!rpc) return
+        const event = rpc.request(COMMANDS.INFERENCE_REQUESTER_EVENT)
+        event.send(Buffer.from(JSON.stringify(payload)))
+      },
+      onStatusChanged: (status) => {
+        if (!rpc) return
+        const event = rpc.request(COMMANDS.INFERENCE_STATUS_EVENT)
+        event.send(Buffer.from(JSON.stringify(status)))
+      },
+    })
     return chat
   })().catch((error) => {
     chatBoot = null
@@ -127,6 +151,30 @@ async function boot () {
           return
         case COMMANDS.SET_CHAT_AVATAR:
           replyJson(req, await activeChat.setChatAvatar(parsePayload(req)))
+          return
+        case COMMANDS.SET_INFERENCE_ENABLED:
+          replyJson(req, await peerInference.setEnabled(parsePayload(req).enabled))
+          return
+        case COMMANDS.SET_INFERENCE_RUNTIME_BUSY:
+          replyJson(req, peerInference.setRuntimeBusy(parsePayload(req).busy))
+          return
+        case COMMANDS.LIST_INFERENCE_PEERS:
+          replyJson(req, await peerInference.browse(parsePayload(req).timeoutMs))
+          return
+        case COMMANDS.REQUEST_PEER_INFERENCE:
+          replyJson(req, await peerInference.request(parsePayload(req)))
+          return
+        case COMMANDS.SEND_INFERENCE_PROGRESS:
+          replyJson(req, { ok: peerInference.sendProviderProgress(parsePayload(req)) })
+          return
+        case COMMANDS.COMPLETE_INFERENCE_REQUEST:
+          replyJson(req, { ok: peerInference.completeProviderRequest(parsePayload(req)) })
+          return
+        case COMMANDS.CANCEL_PEER_INFERENCE:
+          replyJson(req, { ok: peerInference.cancelRequester(parsePayload(req).requestId) })
+          return
+        case COMMANDS.GET_INFERENCE_STATUS:
+          replyJson(req, peerInference.profile())
           return
         default:
           replyJson(req, { error: 'Unknown command ' + req.command })

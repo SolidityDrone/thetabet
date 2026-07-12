@@ -1,11 +1,10 @@
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createRequire } from 'node:module'
 import fs from 'node:fs'
 
-// bare-link is used by react-native-bare-kit, but we keep our own wrapper so we can
-// control which Android ABIs we link. Some deps (like QVAC) ship only 64-bit builds.
 const require = createRequire(import.meta.url)
+const { resolveAddonDependencies } = require('./bare-addon-deps.cjs')
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -71,7 +70,7 @@ if (fs.existsSync(manifestPath)) {
       pkg = {
         name: 'qvac-addon-linker',
         version: '0.0.0',
-        dependencies: Object.fromEntries(addons.map((name) => [name, '*'])),
+        dependencies: resolveAddonDependencies(projectRoot, addons),
       }
     }
   } catch {

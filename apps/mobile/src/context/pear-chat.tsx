@@ -19,8 +19,26 @@ import type {
   PearIdentity,
   PearMessage,
   PearOnlinePeer,
+  PeerInferenceEvent,
+  PeerInferencePeer,
+  PeerInferenceProviderEvent,
+  PeerInferenceRequest,
+  PeerInferenceResult,
   TipsterProfile,
 } from '@/types/pear'
+import type { MatchScoutInput } from '@/services/qvac/match-scout'
+import { runMatchScout, type MatchDossier } from '@/services/qvac/match-scout'
+import { attachReasonsToPicks, type MatchPickSuggestion } from '@/services/qvac/match-outcomes'
+import { buildTipsterHintsPrompt } from '@/services/tipster-notes/storage'
+import { isQvacModelMarkedInstalled } from '@/services/qvac/qvac-model-manager'
+import { loadQvacSettings } from '@/services/qvac/qvac-settings'
+import { unloadQvacModel } from '@/services/qvac/qvac-client'
+import {
+  acquireInference,
+  releaseInference,
+  subscribeInferenceOwner,
+} from '@/services/qvac/inference-coordinator'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { documentDirectory } from 'expo-file-system/legacy'
 import React, {
   createContext,
@@ -33,9 +51,11 @@ import React, {
 } from 'react'
 import RPC from 'bare-rpc'
 import { Worklet } from 'react-native-bare-kit'
+import { AppState } from 'react-native'
 import pearBundle from '../../pear-end.bundle.js'
 
 const VAULT_SESSION_TTL_MS = 24 * 60 * 60 * 1000
+const INFERENCE_OPT_IN_KEY = 'thetabet.peer-inference.opt-in.v1'
 
 type VaultSessionProof = {
   wallet: string
@@ -98,6 +118,29 @@ type PearChatContextValue = {
   refreshContacts: () => Promise<void>
   onMessage: (listener: (message: PearMessage) => void) => () => void
   onContactsChanged: (listener: () => void) => () => void
+  inferenceStatus: PeerInferencePeer | null
+  inferenceOptIn: boolean
+  setInferenceOptIn: (enabled: boolean) => Promise<void>
+  setInferenceEnabled: (enabled: boolean) => Promise<PeerInferencePeer>
+  setInferenceRuntimeBusy: (busy: boolean) => Promise<PeerInferencePeer>
+  listInferencePeers: () => Promise<PeerInferencePeer[]>
+  requestPeerInference: (
+    providerPubkey: string,
+    input: Omit<MatchScoutInput, 'tipsterHintsBlock'>
+  ) => Promise<{ requestId: string; provider: PeerInferencePeer }>
+  sendInferenceProgress: (params: {
+    requestId: string
+    stage?: string
+    message?: string
+  }) => Promise<void>
+  completeInferenceRequest: (params: {
+    requestId: string
+    result?: PeerInferenceResult
+    error?: string
+  }) => Promise<void>
+  cancelPeerInference: (requestId: string) => Promise<void>
+  onInferenceProviderRequest: (listener: (request: PeerInferenceRequest) => void) => () => void
+  onInferenceEvent: (listener: (event: PeerInferenceEvent) => void) => () => void
   ensureStarted: () => Promise<void>
 }
 
@@ -169,6 +212,10 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
   const rpcRef = useRef<RPC | null>(null)
   const messageListenersRef = useRef<Set<(message: PearMessage) => void>>(new Set())
   const contactsListenersRef = useRef<Set<() => void>>(new Set())
+  const inferenceProviderListenersRef = useRef<Set<(request: PeerInferenceRequest) => void>>(
+    new Set()
+  )
+  const inferenceEventListenersRef = useRef<Set<(event: PeerInferenceEvent) => void>>(new Set())
   const bootPromiseRef = useRef<Promise<void> | null>(null)
   const readyRef = useRef(false)
   const vaultSessionProofsRef = useRef<Map<string, VaultSessionProof>>(new Map())
@@ -183,6 +230,10 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
     accepted: [],
   })
   const [dms, setDms] = useState<PearChannel[]>([])
+  const [inferenceStatus, setInferenceStatus] = useState<PeerInferencePeer | null>(null)
+  const [inferenceOptIn, setInferenceOptInState] = useState(false)
+  const [appForeground, setAppForeground] = useState(AppState.currentState === 'active')
+  const remoteAbortRef = useRef<Map<string, AbortController>>(new Map())
 
   const stopWorklet = useCallback(async () => {
     const worklet = workletRef.current
@@ -261,6 +312,42 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
           if (req.command === PEAR_RPC_COMMANDS.CONTACTS_CHANGED_EVENT) {
             contactsListenersRef.current.forEach((listener) => listener())
             req.reply('ok')
+            return
+          }
+
+          if (req.command === PEAR_RPC_COMMANDS.INFERENCE_PROVIDER_REQUEST_EVENT) {
+            try {
+              const event = decodeJson<PeerInferenceProviderEvent>(req.data)
+              if (event.type === 'cancel') {
+                remoteAbortRef.current.get(event.requestId)?.abort()
+              } else {
+                inferenceProviderListenersRef.current.forEach((listener) => listener(event))
+              }
+              req.reply('ok')
+            } catch (bootError) {
+              req.reply(JSON.stringify({ error: String(bootError) }))
+            }
+            return
+          }
+
+          if (req.command === PEAR_RPC_COMMANDS.INFERENCE_REQUESTER_EVENT) {
+            try {
+              const event = decodeJson<PeerInferenceEvent>(req.data)
+              inferenceEventListenersRef.current.forEach((listener) => listener(event))
+              req.reply('ok')
+            } catch (bootError) {
+              req.reply(JSON.stringify({ error: String(bootError) }))
+            }
+            return
+          }
+
+          if (req.command === PEAR_RPC_COMMANDS.INFERENCE_STATUS_EVENT) {
+            try {
+              setInferenceStatus(decodeJson<PeerInferencePeer>(req.data))
+              req.reply('ok')
+            } catch (bootError) {
+              req.reply(JSON.stringify({ error: String(bootError) }))
+            }
           }
         })
         rpcRef.current = rpc
@@ -275,12 +362,17 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
         )
         const nextContacts = await callRpc<PearContactsState>(rpc, PEAR_RPC_COMMANDS.LIST_CONTACTS)
         const nextDms = await callRpc<PearChannel[]>(rpc, PEAR_RPC_COMMANDS.LIST_DMS)
+        const nextInferenceStatus = await callRpc<PeerInferencePeer>(
+          rpc,
+          PEAR_RPC_COMMANDS.GET_INFERENCE_STATUS
+        )
 
         setIdentity(nextIdentity)
         setChannels(nextChannels)
         setTipsterProfileState(profile)
         setContacts(nextContacts)
         setDms(nextDms)
+        setInferenceStatus(nextInferenceStatus)
         readyRef.current = true
         setReady(true)
         setError(null)
@@ -692,6 +784,288 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
     return callRpc<PearChannel[]>(rpc, PEAR_RPC_COMMANDS.LIST_DMS)
   }, [ensureStarted])
 
+  const setInferenceEnabled = useCallback(
+    async (enabled: boolean) => {
+      await ensureStarted()
+      const rpc = rpcRef.current
+      if (!rpc) throw new Error('Pear network is not ready')
+      const status = await callRpc<PeerInferencePeer>(
+        rpc,
+        PEAR_RPC_COMMANDS.SET_INFERENCE_ENABLED,
+        { enabled }
+      )
+      setInferenceStatus(status)
+      return status
+    },
+    [ensureStarted]
+  )
+
+  const setInferenceRuntimeBusy = useCallback(
+    async (busy: boolean) => {
+      await ensureStarted()
+      const rpc = rpcRef.current
+      if (!rpc) throw new Error('Pear network is not ready')
+      const status = await callRpc<PeerInferencePeer>(
+        rpc,
+        PEAR_RPC_COMMANDS.SET_INFERENCE_RUNTIME_BUSY,
+        { busy }
+      )
+      setInferenceStatus(status)
+      return status
+    },
+    [ensureStarted]
+  )
+
+  const listInferencePeers = useCallback(async () => {
+    await ensureStarted()
+    const rpc = rpcRef.current
+    if (!rpc) throw new Error('Pear network is not ready')
+    return callRpc<PeerInferencePeer[]>(rpc, PEAR_RPC_COMMANDS.LIST_INFERENCE_PEERS, {
+      timeoutMs: 2500,
+    }, 10_000)
+  }, [ensureStarted])
+
+  const requestPeerInference = useCallback(
+    async (
+      providerPubkey: string,
+      input: Omit<MatchScoutInput, 'tipsterHintsBlock'>
+    ) => {
+      await ensureStarted()
+      const rpc = rpcRef.current
+      if (!rpc) throw new Error('Pear network is not ready')
+      return callRpc<{ requestId: string; provider: PeerInferencePeer }>(
+        rpc,
+        PEAR_RPC_COMMANDS.REQUEST_PEER_INFERENCE,
+        { providerPubkey, input },
+        20_000
+      )
+    },
+    [ensureStarted]
+  )
+
+  const sendInferenceProgress = useCallback(
+    async (params: { requestId: string; stage?: string; message?: string }) => {
+      await ensureStarted()
+      const rpc = rpcRef.current
+      if (!rpc) throw new Error('Pear network is not ready')
+      await callRpc(rpc, PEAR_RPC_COMMANDS.SEND_INFERENCE_PROGRESS, params)
+    },
+    [ensureStarted]
+  )
+
+  const completeInferenceRequest = useCallback(
+    async (params: {
+      requestId: string
+      result?: PeerInferenceResult
+      error?: string
+    }) => {
+      await ensureStarted()
+      const rpc = rpcRef.current
+      if (!rpc) throw new Error('Pear network is not ready')
+      await callRpc(rpc, PEAR_RPC_COMMANDS.COMPLETE_INFERENCE_REQUEST, params)
+    },
+    [ensureStarted]
+  )
+
+  const cancelPeerInference = useCallback(
+    async (requestId: string) => {
+      await ensureStarted()
+      const rpc = rpcRef.current
+      if (!rpc) return
+      await callRpc(rpc, PEAR_RPC_COMMANDS.CANCEL_PEER_INFERENCE, { requestId })
+    },
+    [ensureStarted]
+  )
+
+  const onInferenceProviderRequest = useCallback(
+    (listener: (request: PeerInferenceRequest) => void) => {
+      inferenceProviderListenersRef.current.add(listener)
+      return () => {
+        inferenceProviderListenersRef.current.delete(listener)
+      }
+    },
+    []
+  )
+
+  const onInferenceEvent = useCallback((listener: (event: PeerInferenceEvent) => void) => {
+    inferenceEventListenersRef.current.add(listener)
+    return () => {
+      inferenceEventListenersRef.current.delete(listener)
+    }
+  }, [])
+
+  const setInferenceOptIn = useCallback(
+    async (enabled: boolean) => {
+      if (enabled) {
+        const settings = await loadQvacSettings()
+        if (!(await isQvacModelMarkedInstalled(settings.modelPreset))) {
+          throw new Error('Download the Local AI model before offering peer inference')
+        }
+        await ensureStarted()
+      }
+      await AsyncStorage.setItem(INFERENCE_OPT_IN_KEY, enabled ? '1' : '0')
+      setInferenceOptInState(enabled)
+      if (readyRef.current && rpcRef.current) {
+        const status = await callRpc<PeerInferencePeer>(
+          rpcRef.current,
+          PEAR_RPC_COMMANDS.SET_INFERENCE_ENABLED,
+          { enabled: enabled && appForeground }
+        )
+        setInferenceStatus(status)
+      }
+    },
+    [appForeground, ensureStarted]
+  )
+
+  useEffect(() => {
+    AsyncStorage.getItem(INFERENCE_OPT_IN_KEY)
+      .then((value) => setInferenceOptInState(value === '1'))
+      .catch(() => setInferenceOptInState(false))
+  }, [])
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      setAppForeground(state === 'active')
+    })
+    return () => subscription.remove()
+  }, [])
+
+  useEffect(() => {
+    if (!inferenceOptIn || !appForeground) return
+    void ensureStarted().catch(() => {})
+  }, [appForeground, ensureStarted, inferenceOptIn])
+
+  useEffect(() => {
+    if (!ready || !rpcRef.current) return
+    let cancelled = false
+    void (async () => {
+      let modelReady = false
+      if (inferenceOptIn && appForeground) {
+        const settings = await loadQvacSettings()
+        modelReady = await isQvacModelMarkedInstalled(settings.modelPreset)
+      }
+      if (cancelled || !rpcRef.current) return
+      const status = await callRpc<PeerInferencePeer>(
+        rpcRef.current,
+        PEAR_RPC_COMMANDS.SET_INFERENCE_ENABLED,
+        { enabled: inferenceOptIn && appForeground && modelReady }
+      )
+      if (!cancelled) setInferenceStatus(status)
+    })().catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [appForeground, inferenceOptIn, ready])
+
+  useEffect(() => {
+    if (!ready) return
+    return subscribeInferenceOwner((owner) => {
+      const rpc = rpcRef.current
+      if (!rpc) return
+      void callRpc<PeerInferencePeer>(
+        rpc,
+        PEAR_RPC_COMMANDS.SET_INFERENCE_RUNTIME_BUSY,
+        { busy: owner !== null }
+      ).then(setInferenceStatus).catch(() => {})
+    })
+  }, [ready])
+
+  const runProviderInference = useCallback(
+    async (request: PeerInferenceRequest) => {
+      const owner = `peer:${request.requestId}` as const
+      if (!acquireInference(owner)) {
+        await completeInferenceRequest({
+          requestId: request.requestId,
+          error: 'Inference engine is busy',
+        })
+        return
+      }
+
+      const controller = new AbortController()
+      remoteAbortRef.current.set(request.requestId, controller)
+      let answer = ''
+      let dossier: MatchDossier | null = null
+      let picks: MatchPickSuggestion[] = []
+      let lastProgressAt = 0
+
+      try {
+        const settings = await loadQvacSettings()
+        if (!(await isQvacModelMarkedInstalled(settings.modelPreset))) {
+          throw new Error('Provider model is not installed')
+        }
+
+        const wallet = await getPolygonWalletAddress()
+        const tipsterHintsBlock = wallet
+          ? await buildTipsterHintsPrompt(wallet, {
+              gameId: request.input.gameId,
+              matchTitle: request.input.matchTitle,
+              league: request.input.league,
+            })
+          : ''
+
+        for await (const event of runMatchScout(
+          { ...request.input, tipsterHintsBlock },
+          { signal: controller.signal }
+        )) {
+          if (controller.signal.aborted) throw new Error('Inference cancelled')
+          if (event.type === 'answer-reset') answer = ''
+          if (event.type === 'answer-delta') answer += event.text
+          if (event.type === 'picks') picks = event.picks
+          if (event.type === 'dossier' || event.type === 'done') dossier = event.dossier
+
+          const message =
+            event.type === 'activity'
+              ? event.message
+              : event.type === 'stage'
+                ? event.stage === 'web'
+                  ? 'Searching public match sources…'
+                  : event.stage === 'synthesis'
+                    ? 'Running peer model…'
+                    : 'Loading peer model…'
+                : null
+          if (message && Date.now() - lastProgressAt > 700) {
+            lastProgressAt = Date.now()
+            await sendInferenceProgress({
+              requestId: request.requestId,
+              stage: event.type === 'stage' ? event.stage : undefined,
+              message,
+            })
+          }
+        }
+
+        if (!dossier) throw new Error('Peer analysis produced no dossier')
+        const suggestions = attachReasonsToPicks(answer, picks, request.input.matchTitle)
+        await completeInferenceRequest({
+          requestId: request.requestId,
+          result: { dossier, answer, suggestions },
+        })
+      } catch (error) {
+        await completeInferenceRequest({
+          requestId: request.requestId,
+          error: error instanceof Error ? error.message : String(error),
+        }).catch(() => {})
+      } finally {
+        remoteAbortRef.current.delete(request.requestId)
+        try {
+          await unloadQvacModel()
+        } catch {}
+        releaseInference(owner)
+      }
+    },
+    [completeInferenceRequest, sendInferenceProgress]
+  )
+
+  useEffect(() => {
+    const listeners = inferenceProviderListenersRef.current
+    const listener = (request: PeerInferenceRequest) => {
+      void runProviderInference(request)
+    }
+    listeners.add(listener)
+    return () => {
+      listeners.delete(listener)
+    }
+  }, [runProviderInference])
+
   const onContactsChanged = useCallback((listener: () => void) => {
     contactsListenersRef.current.add(listener)
     return () => {
@@ -722,6 +1096,8 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
       tipsterProfile,
       contacts,
       dms,
+      inferenceStatus,
+      inferenceOptIn,
       createChannel,
       createVaultChannel,
       joinVaultChannel,
@@ -746,6 +1122,16 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
       refreshContacts,
       onMessage,
       onContactsChanged,
+      setInferenceEnabled,
+      setInferenceRuntimeBusy,
+      listInferencePeers,
+      requestPeerInference,
+      sendInferenceProgress,
+      completeInferenceRequest,
+      cancelPeerInference,
+      onInferenceProviderRequest,
+      onInferenceEvent,
+      setInferenceOptIn,
       ensureStarted,
     }),
     [
@@ -756,6 +1142,8 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
       tipsterProfile,
       contacts,
       dms,
+      inferenceStatus,
+      inferenceOptIn,
       createChannel,
       createVaultChannel,
       joinVaultChannel,
@@ -780,6 +1168,16 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
       refreshContacts,
       onMessage,
       onContactsChanged,
+      setInferenceEnabled,
+      setInferenceRuntimeBusy,
+      listInferencePeers,
+      requestPeerInference,
+      sendInferenceProgress,
+      completeInferenceRequest,
+      cancelPeerInference,
+      onInferenceProviderRequest,
+      onInferenceEvent,
+      setInferenceOptIn,
       ensureStarted,
     ]
   )

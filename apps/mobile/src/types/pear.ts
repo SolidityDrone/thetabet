@@ -1,3 +1,6 @@
+import type { MatchPickSuggestion } from '@/services/qvac/match-outcomes'
+import type { MatchDossier, MatchScoutInput } from '@/services/qvac/match-scout'
+
 export interface PearIdentity {
   pubkey: string
   /** Short Pear device id — internal only */
@@ -100,3 +103,51 @@ export interface PearOnlinePeer {
   role?: string | null
   lastSeen: number
 }
+
+export type PeerInferenceStatus = 'available' | 'busy' | 'offline'
+
+export interface PeerInferencePeer {
+  pubkey: string
+  handle?: string | null
+  avatarData?: string | null
+  status: PeerInferenceStatus
+  updatedAt: number
+}
+
+export interface PeerInferenceRequest {
+  type: 'request'
+  requestId: string
+  requesterPubkey: string
+  input: Omit<MatchScoutInput, 'tipsterHintsBlock'>
+}
+
+export type PeerInferenceProviderEvent =
+  | PeerInferenceRequest
+  | { type: 'cancel'; requestId: string }
+
+export interface PeerInferenceResult {
+  dossier: MatchDossier
+  answer: string
+  suggestions: MatchPickSuggestion[]
+}
+
+export type PeerInferenceEvent =
+  | {
+      type: 'progress'
+      requestId: string
+      providerPubkey: string
+      stage?: string
+      message?: string
+    }
+  | {
+      type: 'result'
+      requestId: string
+      providerPubkey: string
+      result: PeerInferenceResult
+    }
+  | {
+      type: 'error'
+      requestId: string
+      providerPubkey: string
+      message: string
+    }

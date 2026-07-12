@@ -1,9 +1,14 @@
-import { IdentityBadge } from '@/components/pear/identity-badge'
 import { ChatAvatar } from '@/components/pear/chat-avatar'
+import { IdentityBadge } from '@/components/pear/identity-badge'
 import { colors } from '@/constants/colors'
 import { usePearChat } from '@/context/pear-chat'
 import { useWalletPortfolio } from '@/hooks/use-wallet-portfolio'
 import { filterChatMessages, isPearSystemMessage, mergeChatMessages, PEAR_PRESENCE_PREFIX } from '@/services/pear-message-utils'
+import { ensureModelReady } from '@/services/qvac/qvac-client'
+import { isQvacModelMarkedInstalled } from '@/services/qvac/qvac-model-manager'
+import { loadQvacSettings } from '@/services/qvac/qvac-settings'
+import { parseAskCommand, runTipsterAsk } from '@/services/tipster-notes/ask'
+import { loadTipsterNotes } from '@/services/tipster-notes/storage'
 import { getPolygonWalletAddress } from '@/services/wdk-address'
 import type { PearMessage, PearOnlinePeer } from '@/types/pear'
 import { useLocalSearchParams } from 'expo-router'
@@ -213,8 +218,49 @@ export default function ChannelScreen() {
     const text = draft.trim()
     if (!text || !channelId) return
 
+    const ask = channel.kind === 'dm' ? parseAskCommand(text) : null
+
     setSending(true)
     try {
+      if (ask && address) {
+        if (ask.useResearch) {
+          Alert.alert(
+            'Use match AI for research',
+            'Open a match and tap the sparkles icon for full web scout. /ask uses your tipster notes only.'
+          )
+          return
+        }
+
+        const settings = await loadQvacSettings()
+        const installed = await isQvacModelMarkedInstalled(settings.modelPreset)
+        if (!installed) {
+          Alert.alert('Model required', 'Download the local AI model in Settings first.')
+          return
+        }
+
+        await ensureModelReady()
+
+        let matchTitle: string | undefined
+        let league: string | undefined
+        if (ask.gameId) {
+          const store = await loadTipsterNotes(address)
+          const entry = store.matches[ask.gameId]
+          matchTitle = entry?.matchTitle
+          league = entry?.league
+        }
+
+        const answer = await runTipsterAsk(address, ask.question, {
+          gameId: ask.gameId,
+          matchTitle,
+          league,
+        })
+
+        const outbound = await sendMessage(channelId, answer)
+        setMessages((current) => mergeChatMessages(current, [outbound]))
+        setDraft('')
+        return
+      }
+
       const message = await sendMessage(channelId, text)
       setMessages((current) => mergeChatMessages(current, [message]))
       setDraft('')
@@ -420,7 +466,11 @@ export default function ChannelScreen() {
       <View style={[styles.composer, { paddingBottom: insets.bottom + 8 }]}>
         <TextInput
           style={styles.input}
-          placeholder="Message…"
+          placeholder={
+            channel.kind === 'dm'
+              ? 'Message… or /ask goal or no goal?'
+              : 'Message…'
+          }
           placeholderTextColor={colors.textTertiary}
           value={draft}
           onChangeText={setDraft}

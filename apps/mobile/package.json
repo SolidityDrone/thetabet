@@ -7,17 +7,20 @@
     "kill:metro": "node scripts/kill-metro-port.mjs",
     "start": "node scripts/kill-metro-port.mjs && REACT_NATIVE_PACKAGER_HOSTNAME=localhost expo start --dev-client --localhost --port 8081",
     "start:clean": "node scripts/kill-metro-port.mjs && REACT_NATIVE_PACKAGER_HOSTNAME=localhost expo start --dev-client --localhost --port 8081 -c",
-    "android": "expo run:android",
+    "android": "npm run bundle:qvac && npm run link:bare && node scripts/copy-libcxx.mjs && expo run:android",
+    "install:android": "node scripts/install-android.mjs",
+    "install:android:win": "node scripts/install-android.mjs",
     "prebuild": "expo prebuild",
     "prebuild:clean": "expo prebuild --clean",
-    "bundle:pear": "node scripts/generate-imports.mjs && bare-pack --target android-arm64 --target android-x64 --linked --format bundle.cjs --out pear-end.bundle.js pear-end/index.mjs",
+    "bundle:pear": "node scripts/dedupe-bare-fs.mjs && node scripts/generate-imports.mjs && bare-pack --target android-arm64 --target android-x64 --linked --format bundle.cjs --out pear-end.bundle.js pear-end/index.mjs",
     "pear:chat": "bare scripts/pear-chat-demo.mjs",
     "bundle:qvac": "node scripts/bundle-qvac.mjs",
     "open:android": "node scripts/open-android.mjs",
     "test:azuro-api": "node scripts/test-azuro-api.mjs",
     "preinstall": "npm install @tetherto/pear-wrk-wdk --ignore-scripts --legacy-peer-deps 2>/dev/null || true",
-    "postinstall": "node scripts/patch-bare-kit-link.mjs && node scripts/link-bare-addons.mjs",
-    "link:bare": "node scripts/patch-bare-kit-link.mjs && node scripts/link-bare-addons.mjs"
+    "postinstall": "node scripts/patch-bare-kit-link.mjs && node scripts/patch-qvac-expo-rpc.mjs && node scripts/link-bare-addons.mjs && node scripts/dedupe-bare-fs.mjs",
+    "link:bare": "node scripts/patch-bare-kit-link.mjs && node scripts/link-bare-addons.mjs",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@azuro-org/dictionaries": "^3.0.28",
@@ -38,12 +41,14 @@
     "@tetherto/wdk-uikit-react-native": "^1.0.0-beta.2",
     "b4a": "^1.7.2",
     "bare-rpc": "^0.2.13",
+    "bare-fs": "4.4.11",
     "bip39": "^3.1.0",
     "browserify-zlib": "^0.2.0",
     "corestore": "^7.1.2",
     "decimal.js": "^10.6.0",
     "events": "^3.3.0",
     "expo": "~54.0.8",
+    "expo-audio": "~1.1.1",
     "expo-build-properties": "~1.0.10",
     "expo-camera": "~17.0.8",
     "expo-clipboard": "~8.0.7",
@@ -75,6 +80,9 @@
     "path-browserify": "^1.0.1",
     "process": "^0.11.10",
     "querystring-es3": "^0.2.1",
+    "qvac-linked-bare-crypto": "npm:bare-crypto@1.15.3",
+    "qvac-linked-bare-signals": "npm:bare-signals@4.2.0",
+    "qvac-linked-bare-tls": "npm:bare-tls@3.1.7",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.4",
@@ -107,11 +115,14 @@
     "wdk-linked-bare-buffer": "npm:bare-buffer@3.4.0",
     "wdk-linked-bare-crypto": "npm:bare-crypto@1.11.6",
     "wdk-linked-bare-fs": "npm:bare-fs@4.4.11",
+    "wdk-linked-bare-hrtime": "npm:bare-hrtime@2.1.1",
     "wdk-linked-bare-os-361": "npm:bare-os@3.6.1",
     "wdk-linked-bare-os-362": "npm:bare-os@3.6.2",
     "wdk-linked-bare-pipe": "npm:bare-pipe@4.0.7",
     "wdk-linked-bare-signals": "npm:bare-signals@4.0.4",
     "wdk-linked-bare-tcp": "npm:bare-tcp@2.0.9",
+    "wdk-linked-bare-tls": "npm:bare-tls@2.1.5",
+    "wdk-linked-bare-tty": "npm:bare-tty@5.0.3",
     "wdk-linked-bare-type": "npm:bare-type@1.0.8",
     "wdk-linked-bare-url": "npm:bare-url@2.3.0"
   },
@@ -142,5 +153,8 @@
   "peerDependencies": {
     "react": "19.1.0",
     "react-native": "0.81.4"
+  },
+  "overrides": {
+    "bare-fs": "4.4.11"
   }
 }

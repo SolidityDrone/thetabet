@@ -20,6 +20,7 @@ function findProjectRoot(startDir) {
 }
 
 const projectRoot = findProjectRoot(process.cwd())
+const { resolveAddonDependencies } = require(path.join(projectRoot, 'scripts', 'bare-addon-deps.cjs'))
 const addonsDir = path.join(__dirname, 'src', 'main', 'addons')
 
 if (fs.existsSync(addonsDir)) {
@@ -28,7 +29,6 @@ if (fs.existsSync(addonsDir)) {
 
 const manifestPath = path.join(projectRoot, 'qvac', 'addons.manifest.json')
 let pkg = null
-
 if (fs.existsSync(manifestPath)) {
   try {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
@@ -38,7 +38,7 @@ if (fs.existsSync(manifestPath)) {
       pkg = {
         name: 'thetabet-bare-linker',
         version: '0.0.0',
-        dependencies: Object.fromEntries(addons.map((name) => [name, '*'])),
+        dependencies: resolveAddonDependencies(projectRoot, addons),
       }
     }
   } catch (err) {

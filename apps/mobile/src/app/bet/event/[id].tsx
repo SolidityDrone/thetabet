@@ -22,6 +22,7 @@ import {
 } from '@/services/azuro/vault-bet-placement'
 import { saveLocalBet } from '@/services/azuro/bet-history'
 import { MatchAiSheet } from '@/components/ai/match-ai-sheet'
+import { TipsterMatchNotesPanel } from '@/components/tipster/tipster-match-notes-panel'
 import { loadQvacSettings, QVAC_MODEL_OPTIONS } from '@/services/qvac/qvac-settings'
 import getErrorMessage from '@/utils/get-error-message'
 import type { AzuroBetMode, AzuroBetSelection } from '@/types/azuro'
@@ -385,6 +386,15 @@ export default function BetEventScreen() {
 
             {game ? <EventCard game={game} large liveStats={liveStats} /> : null}
 
+            {canBetAsTipster && address ? (
+              <TipsterMatchNotesPanel
+                ownerId={address}
+                gameId={game?.id ?? id ?? ''}
+                matchTitle={game?.title ?? 'Match'}
+                league={game?.league?.name ?? null}
+              />
+            ) : null}
+
             {isOnChain === false ? (
               <View style={styles.previewCard}>
                 <Text style={styles.previewTitle}>No open markets</Text>
@@ -487,6 +497,7 @@ export default function BetEventScreen() {
             matchTitle={game?.title ?? 'Match'}
             startsAt={game?.startsAt ?? null}
             league={game?.league?.name ?? null}
+            ownerId={address ?? null}
             markets={markets.map((condition) => ({
               conditionId: condition.conditionId,
               conditionTitle: condition.title,

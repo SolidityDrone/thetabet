@@ -43,9 +43,10 @@ const importsMapPath = path.join(sdkPath, 'bare-imports.json')
 const resolveSdkImport = createSdkImportResolver(sdkPath, sdkName)
 const configPath = path.join(projectRoot, 'qvac.config.json')
 
-// ---- Step 1: No-plugins bundle (for download) ----
-// Uses low-level APIs to bypass bundleSdk's "empty plugins = ALL builtins" fallback.
-console.log('Bundling QVAC worker (no plugins — for download)…')
+// ---- Step 1: No-plugins bundle (reference + download-safe manifest baseline) ----
+console.log('Bundling QVAC worker (no plugins — reference)…')
+const { execSync } = await import('node:child_process')
+execSync('node scripts/dedupe-bare-fs.mjs', { cwd: projectRoot, stdio: 'inherit' })
 
 const noPluginsEntryPath = path.join(qvacDir, 'worker.no-plugins.entry.mjs')
 const noPluginsEntry = generateWorkerEntry([], sdkName, resolveSdkImport)
@@ -62,23 +63,17 @@ await runBarePack({
   logger,
 })
 
-// Capture no-plugins bundle content in memory for restoration later
 const noPluginsContent = fs.readFileSync(generatedBundle)
 
-// Verify
 const verify = await verifyBundle({ projectRoot, addonsSource: generatedBundle, hosts, configPath })
 if (hasErrors(verify)) {
   console.error(formatVerifyBundleResult(verify))
   process.exit(1)
 }
 
-fs.copyFileSync(generatedBundle, sdkBundle)
-console.log(`Copied no-plugins bundle (${(noPluginsContent.length / 1024).toFixed(0)} KB) to @qvac/sdk/dist/worker.mobile.bundle.js`)
+console.log(`No-plugins bundle ready (${(noPluginsContent.length / 1024).toFixed(0)} KB)`)
 
-// Generate no-plugins manifest (for reference only — full manifest overwrites it)
-await generateAddonsManifest({ bundlePath: generatedBundle, outputDir: qvacDir, projectRoot, logger })
-
-// ---- Step 2: Full bundle (with LLM plugin, for inference) ----
+// ---- Step 2: Full eager bundle (LLM + translation — matches 65cee50 working setup) ----
 fs.writeFileSync(
   fullConfigPath,
   JSON.stringify(
@@ -89,37 +84,46 @@ fs.writeFileSync(
       ],
     },
     null,
-    2
+    2,
   ),
-  'utf8'
+  'utf8',
 )
 
-console.log('\nBundling QVAC worker (with LLM plugin — for inference)…')
+console.log('\nBundling QVAC worker (eager LLM + translation plugins — for inference)…')
 await bundleSdk({ projectRoot, hosts, quiet: false, configPath: fullConfigPath })
 
-// Move full bundle aside
 fs.renameSync(generatedBundle, fullBundle)
 
-const verifyFull = await verifyBundle({ projectRoot, addonsSource: fullBundle, hosts, configPath: fullConfigPath })
+const verifyFull = await verifyBundle({
+  projectRoot,
+  addonsSource: fullBundle,
+  hosts,
+  configPath: fullConfigPath,
+})
 if (hasErrors(verifyFull)) {
   console.error('Full bundle verification failed:', formatVerifyBundleResult(verifyFull))
   process.exit(1)
 }
 
-// Read full manifest
+await generateAddonsManifest({ bundlePath: fullBundle, outputDir: qvacDir, projectRoot, logger })
 const fullManifest = JSON.parse(fs.readFileSync(path.join(qvacDir, 'addons.manifest.json'), 'utf8'))
 fs.unlinkSync(fullConfigPath)
 
-// ---- Step 3: Restore the no-plugins bundle as default ----
+// ---- Step 3: Activate EAGER full worker in SDK dist (was manual cp in 65cee50) ----
 fs.writeFileSync(generatedBundle, noPluginsContent)
-fs.copyFileSync(generatedBundle, sdkBundle)
-console.log('Restored no-plugins bundle as default (qvac/worker.bundle.js + SDK dist)')
+fs.copyFileSync(fullBundle, sdkBundle)
+console.log('Activated EAGER full worker in SDK dist; qvac/worker.bundle.js kept as no-plugins reference')
 
-// ---- Step 4: Apply FULL manifest (native libs for both bundles are linked in APK) ----
+// ---- Step 4: Full manifest drives native linking in APK ----
 fs.writeFileSync(path.join(qvacDir, 'addons.manifest.json'), JSON.stringify(fullManifest, null, 2), 'utf8')
 console.log('Applied full addons manifest — LLM + translation native libraries linked in APK')
 
-console.log('\nDone! Bundles:\n  - qvac/worker.bundle.js        (%d KB, no plugins — for download)\n  - qvac/worker.full.bundle.js    (%d KB, with LLM plugin — for inference)',
+// ---- Step 5: Patch Expo RPC client (detect stale Android worklet after rebundle) ----
+execSync('node scripts/patch-qvac-expo-rpc.mjs', { cwd: projectRoot, stdio: 'inherit' })
+
+console.log(
+  '\nDone! Bundles:\n  - qvac/worker.bundle.js        (%d KB, no plugins — reference)\n  - qvac/worker.full.bundle.js    (%d KB, eager plugins — ACTIVE in SDK)',
   Math.round(fs.statSync(generatedBundle).size / 1024),
-  Math.round(fs.statSync(fullBundle).size / 1024))
-console.log('\nInference: cp qvac/worker.full.bundle.js node_modules/@qvac/sdk/dist/worker.mobile.bundle.js && restart app')
+  Math.round(fs.statSync(fullBundle).size / 1024),
+)
+console.log('\nEager full worker active — force-close app, reopen Metro, then try inference')

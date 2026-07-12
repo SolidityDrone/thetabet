@@ -56,6 +56,12 @@
         }
       ],
       [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone for voice hints."
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "android": {
@@ -69,7 +75,8 @@
       ],
       "./plugins/withAndroidSubprojects.js",
       "./plugins/withAndroidCleartextLocalhost.js",
-      "./plugins/withAndroidNdk27.js"
+      "./plugins/withAndroidNdk27.js",
+      "./plugins/withQvacLibcxx.js"
     ],
     "experiments": {
       "typedRoutes": true,

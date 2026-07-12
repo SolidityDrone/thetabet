@@ -132,10 +132,12 @@ export type ScoutEvent =
   | { type: 'done'; dossier: MatchDossier }
 
 export type MatchScoutInput = {
+  gameId?: string | null
   matchTitle: string
   startsAt?: string | null
   league?: string | null
   markets: MatchMarketInput[]
+  tipsterHintsBlock?: string
 }
 
 const HITS_PER_SCOUT = 3
@@ -148,20 +150,27 @@ function formatDiverseCatalog(markets: MatchMarketInput[]): string {
   return formatOutcomeCatalogForPrompt(markets, 6)
 }
 
+function tipsterBlock(input: MatchScoutInput): string {
+  return input.tipsterHintsBlock?.trim() ?? ''
+}
+
 function buildPicksOnlyPrompt(input: MatchScoutInput, intel: WebIntel[]): string {
   const markets = pickDiverseMarketsForAi(input.markets, 4)
   const catalog = formatDiverseCatalog(markets)
   const webBrief = buildCompactWebBrief(intel).slice(0, 280)
   const sides = teamSideHints(input.matchTitle)
+  const hints = tipsterBlock(input)
 
   return [
     MODEL_REPLY_RULES,
+    hints,
     `Match: ${input.matchTitle}`,
     sides ?? '',
     '',
     '=== AVAILABLE OUTCOMES (you MUST pick from this list) ===',
     catalog,
     OUTCOME_NAMING_RULES,
+    hints ? 'Tipster convictions outrank scout intel when they conflict.' : '',
     webBrief ? `Scout intel:\n${webBrief}` : '',
     '',
     'Pick the best 1-3 outcomes. Copy outcome labels exactly as shown in quotes.',
@@ -185,6 +194,7 @@ function buildPreviewPrompt(
   const away = sides?.away ?? 'Away'
   const markets = pickDiverseMarketsForAi(input.markets, 4)
   const catalog = formatDiverseCatalog(markets)
+  const hints = tipsterBlock(input)
   const playBlock =
     picks.length > 0
       ? picks
@@ -197,9 +207,11 @@ function buildPreviewPrompt(
 
   return [
     MODEL_REPLY_RULES,
+    hints,
     `Betting preview for ${input.matchTitle}.`,
     input.league ? `Competition: ${input.league}` : '',
     teamSideHints(input.matchTitle) ?? '',
+    hints ? 'Tipster convictions outrank scout facts when they conflict.' : '',
     '',
     'Scout facts (synthesize — never copy URLs or headlines):',
     webBrief,
@@ -398,6 +410,7 @@ export async function* runMatchScout(
   }
 
   yield { type: 'stage', stage: 'loading-model' }
+  emit({ type: 'activity', message: 'Loading local model (CPU)…' })
 
   const webPromises = SCOUTS.map((spec) => collectWebIntel(spec, input, signal, emit))
   const webAll = Promise.all(webPromises)

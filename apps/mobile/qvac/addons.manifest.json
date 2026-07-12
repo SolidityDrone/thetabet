@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "bundleId": "b43218690aaa1201e657d9f1a9dfa21ca26bb66ea76353572dbefbcf79d7dfb0",
+  "bundleId": "43ef6d318b3361a11b3b17da6593b71c0fc5206ea9b7c2a8952612623da05032",
   "addons": [
     "@qvac/llm-llamacpp",
     "@qvac/translation-nmtcpp",

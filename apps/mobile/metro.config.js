@@ -45,6 +45,15 @@ wdkConfig.resolver.resolveRequest = (context, moduleName, platform) => {
     'use-latest-callback': 'node_modules/use-latest-callback/lib/src/index.js',
   };
 
+  // expo-audio barrel index re-exports RecordingConstants; Metro occasionally fails
+  // resolving that relative path — load the implementation modules directly instead.
+  if (moduleName === 'expo-audio') {
+    return {
+      filePath: path.resolve(__dirname, 'node_modules/expo-audio/build/ExpoAudio.js'),
+      type: 'sourceFile',
+    };
+  }
+
   if (forceCjsPackages[moduleName]) {
     return {
       filePath: path.resolve(__dirname, forceCjsPackages[moduleName]),

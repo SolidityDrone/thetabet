@@ -7,7 +7,8 @@ const outPath = path.join(root, 'pear-end', 'pack.imports.json')
 
 const imports = {
   '#package': path.join(root, 'package.json'),
-  'bare-fs': path.join(root, 'node_modules', 'bare-fs'),
+  // Pin WDK bare addons to the versions linked into the APK (wdk-linked-* aliases).
+  'bare-fs': path.join(root, 'node_modules', 'wdk-linked-bare-fs'),
   'bare-path': path.join(root, 'node_modules', 'bare-path'),
   b4a: path.join(root, 'node_modules', 'b4a'),
   corestore: path.join(root, 'node_modules', 'corestore'),

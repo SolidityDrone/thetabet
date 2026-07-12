@@ -1,4 +1,5 @@
 import { VaultShareRow } from '@/components/wallet/vault-share-row'
+import { TipsterProfileDrawer } from '@/components/tipster/tipster-profile-drawer'
 import { WalletActionRow } from '@/components/wallet/wallet-action-row'
 import { WalletAssetRow } from '@/components/wallet/wallet-asset-row'
 import { BrandHeader } from '@/components/ui/brand-header'
@@ -10,8 +11,8 @@ import { useConfirmSheet } from '@/context/confirm-sheet'
 import { useProfileVaults } from '@/hooks/use-profile-vaults'
 import { useWalletPortfolio } from '@/hooks/use-wallet-portfolio'
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation'
-import { Settings } from 'lucide-react-native'
-import { useCallback } from 'react'
+import { Settings, UserRound } from 'lucide-react-native'
+import { useCallback, useState } from 'react'
 import {
   ActivityIndicator,
   RefreshControl,
@@ -40,6 +41,7 @@ export function WalletHomeScreen() {
     refresh,
   } = useWalletPortfolio()
   const { positions: vaultPositions, refresh: refreshVaults } = useProfileVaults(address ?? '')
+  const [profileOpen, setProfileOpen] = useState(false)
 
   const handleRefresh = useCallback(() => {
     void refresh()
@@ -109,9 +111,14 @@ export function WalletHomeScreen() {
         subtitle={`${chain.name} · ${shortAddress || 'No address'}`}
         compact
         right={
-          <TouchableOpacity style={styles.settingsButton} onPress={handleSettings}>
-            <Settings size={20} color={colors.primary} />
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity style={styles.settingsButton} onPress={() => setProfileOpen(true)}>
+              <UserRound size={20} color={colors.gold} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.settingsButton} onPress={handleSettings}>
+              <Settings size={20} color={colors.primary} />
+            </TouchableOpacity>
+          </View>
         }
       />
 
@@ -175,6 +182,12 @@ export function WalletHomeScreen() {
           ) : null}
         </View>
       </ScrollView>
+
+      <TipsterProfileDrawer
+        visible={profileOpen}
+        ownerId={address}
+        onClose={() => setProfileOpen(false)}
+      />
     </View>
   )
 }
@@ -216,6 +229,10 @@ const styles = StyleSheet.create({
   },
   settingsButton: {
     padding: 8,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   chainPillRow: {
     flexDirection: 'row',

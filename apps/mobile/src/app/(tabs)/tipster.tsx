@@ -43,20 +43,19 @@ export default function TipsterScreen() {
     setBusy(true)
     try {
       const publicChannel = await createChannel(`${displayName.trim()} · Public`, false)
-      const privateChannel = await createChannel(`${displayName.trim()} · Private`, true)
 
       await setTipsterProfile({
         displayName: displayName.trim(),
         bio: bio.trim(),
         walletAddress,
         publicChannelId: publicChannel.id,
-        privateChannelId: privateChannel.id,
+        privateChannelId: null,
         createdAt: Date.now(),
       })
 
       Alert.alert(
         'Tipster ready',
-        'Public + private channels created. Share the private topic key with fans (Phase 3 will token-gate this).',
+        'Profile saved. Use the global Public lobby, encrypted DMs, and your token-gated vault room.',
         [
           {
             text: 'Open public channel',
@@ -89,8 +88,7 @@ export default function TipsterScreen() {
     >
       <Text style={styles.title}>Tipster onboard</Text>
       <Text style={styles.subtitle}>
-        Permissionless vault creation comes in Phase 3. For now, spin up your public discovery channel
-        and private fan chat on Pear P2P.
+        Your profile appears in the global Public lobby, encrypted DMs, and token-gated vault chat.
       </Text>
 
       <View style={styles.card}>
@@ -125,14 +123,14 @@ export default function TipsterScreen() {
           <Text style={styles.label}>Existing tipster profile</Text>
           <Text style={styles.value}>{tipsterProfile.displayName}</Text>
           <Text style={styles.hint}>
-            Public: {tipsterProfile.publicChannelId} · Private: {tipsterProfile.privateChannelId}
+            Public lobby: {tipsterProfile.publicChannelId}
           </Text>
         </View>
       ) : null}
 
       <TouchableOpacity style={styles.primaryButton} onPress={handleOnboard} disabled={busy}>
         <Text style={styles.primaryButtonText}>
-          {tipsterProfile ? 'Recreate channels' : 'Create tipster channels'}
+          {tipsterProfile ? 'Update chat profile' : 'Create chat profile'}
         </Text>
       </TouchableOpacity>
     </ScrollView>

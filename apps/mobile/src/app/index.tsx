@@ -15,7 +15,7 @@ export default function Index() {
     pricingService
       .initialize()
       .catch((error) => {
-        console.error('Failed to initialize pricing service:', error);
+        console.warn('Pricing service offline — fiat values unavailable:', error)
       })
       .finally(() => setIsPricingReady(true));
   }, []);

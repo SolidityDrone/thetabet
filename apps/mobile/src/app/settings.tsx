@@ -10,12 +10,16 @@ import useWalletAvatar from '@/hooks/use-wallet-avatar';
 import { useWallet } from '@tetherto/wdk-react-native-provider';
 import * as Clipboard from 'expo-clipboard';
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation';
-import { ChevronDown, Copy, Info, Shield, Trash2, Wallet } from 'lucide-react-native';
+import { ChevronDown, Copy, Camera, ImagePlus, Info, Shield, Trash2, Wallet } from 'lucide-react-native';
 import React from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { toast } from 'sonner-native';
 import { colors } from '@/constants/colors';
+import { ChatAvatar } from '@/components/pear/chat-avatar'
+import { ChatAvatarCameraModal } from '@/components/pear/chat-avatar-camera-modal'
+import { usePearChat } from '@/context/pear-chat'
+import { pickChatAvatarFromGallery } from '@/services/chat-avatar-picker'
 import type { QvacUserSettings } from '@/services/qvac/qvac-settings'
 import {
   getCtxLimitsForPreset,
@@ -47,6 +51,50 @@ export default function SettingsScreen() {
   const { wallet, clearWallet } = useWallet();
   const { address: polygonAddress, shortAddress: polygonShortAddress } = useThetaWalletAddress();
   const avatar = useWalletAvatar();
+  const { identity: chatIdentity, setChatAvatar } = usePearChat()
+  const [uploadingChatAvatar, setUploadingChatAvatar] = React.useState(false)
+  const [avatarCameraVisible, setAvatarCameraVisible] = React.useState(false)
+
+  const saveChatAvatar = React.useCallback(
+    async (payload: { imageBase64: string; mimeType: string }) => {
+      try {
+        setUploadingChatAvatar(true)
+        await setChatAvatar(payload)
+        toast.success('Chat photo updated')
+      } catch (error) {
+        toast.error(String(error))
+        throw error
+      } finally {
+        setUploadingChatAvatar(false)
+      }
+    },
+    [setChatAvatar]
+  )
+
+  const pickChatAvatarFromLibrary = React.useCallback(async () => {
+    try {
+      setUploadingChatAvatar(true)
+      const picked = await pickChatAvatarFromGallery()
+      if (!picked) return
+      await saveChatAvatar(picked)
+    } catch (error) {
+      toast.error(String(error))
+    } finally {
+      setUploadingChatAvatar(false)
+    }
+  }, [saveChatAvatar])
+
+  const clearChatAvatar = React.useCallback(async () => {
+    try {
+      setUploadingChatAvatar(true)
+      await setChatAvatar({ clear: true })
+      toast.success('Chat photo removed')
+    } catch (error) {
+      toast.error(String(error))
+    } finally {
+      setUploadingChatAvatar(false)
+    }
+  }, [setChatAvatar])
   const [qvac, setQvac] = React.useState<QvacUserSettings | null>(null)
   const [installed, setInstalled] = React.useState<boolean | null>(null)
   const [translationInstalled, setTranslationInstalled] = React.useState<boolean | null>(null)
@@ -227,6 +275,53 @@ export default function SettingsScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Chat avatar</Text>
+          </View>
+          <Text style={styles.infoLabel}>
+            Shown beside your Public, vault, and direct messages. Keep the default anonymous icon,
+            choose a photo from your library, or take one with the camera.
+          </Text>
+          <View style={styles.chatAvatarSection}>
+            <ChatAvatar
+              avatarUri={chatIdentity?.avatarUri}
+              avatarData={chatIdentity?.avatarData}
+              size={72}
+            />
+            <View style={styles.chatAvatarActions}>
+              <TouchableOpacity
+                style={[styles.chatAvatarButton, uploadingChatAvatar && styles.chatAvatarButtonDisabled]}
+                onPress={() => void pickChatAvatarFromLibrary()}
+                disabled={uploadingChatAvatar}
+              >
+                <ImagePlus size={16} color={colors.background} />
+                <Text style={styles.chatAvatarButtonText}>
+                  {uploadingChatAvatar ? 'Saving…' : 'Choose photo'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.chatAvatarSecondaryAction, uploadingChatAvatar && styles.chatAvatarButtonDisabled]}
+                onPress={() => setAvatarCameraVisible(true)}
+                disabled={uploadingChatAvatar}
+              >
+                <Camera size={15} color={colors.text} />
+                <Text style={styles.chatAvatarSecondaryActionText}>Take photo</Text>
+              </TouchableOpacity>
+              {chatIdentity?.avatarUri || chatIdentity?.avatarData ? (
+                <TouchableOpacity
+                  style={styles.chatAvatarSecondaryButton}
+                  onPress={() => void clearChatAvatar()}
+                  disabled={uploadingChatAvatar}
+                >
+                  <Trash2 size={14} color={colors.textSecondary} />
+                  <Text style={styles.chatAvatarSecondaryText}>Remove photo</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        </View>
+
         {/* Wallet Info Section */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -488,6 +583,11 @@ export default function SettingsScreen() {
         onSelect={handleLanguageSelect}
         onClose={() => setLanguagePickerVisible(false)}
       />
+      <ChatAvatarCameraModal
+        visible={avatarCameraVisible}
+        onClose={() => setAvatarCameraVisible(false)}
+        onCapture={saveChatAvatar}
+      />
     </View>
   );
 }
@@ -740,5 +840,67 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 14,
     marginTop: 4,
+  },
+  chatAvatarSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  chatAvatarActions: {
+    flex: 1,
+    gap: 10,
+  },
+  chatAvatarButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  chatAvatarButtonDisabled: {
+    opacity: 0.6,
+  },
+  chatAvatarButtonText: {
+    color: colors.background,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  chatAvatarSecondaryAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.cardDark,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  chatAvatarSecondaryActionText: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  chatAvatarSecondaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  chatAvatarSecondaryText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

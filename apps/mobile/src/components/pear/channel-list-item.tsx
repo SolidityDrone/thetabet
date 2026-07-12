@@ -1,7 +1,8 @@
 import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import type { PearChannel } from '@/types/pear'
-import { Lock, Megaphone, User } from 'lucide-react-native'
+import { ChatAvatar } from '@/components/pear/chat-avatar'
+import { Lock, Megaphone, TrendingUp, User } from 'lucide-react-native'
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 
 type Props = {
@@ -28,6 +29,9 @@ function avatarVisual(channel: PearChannel): { icon: React.ReactNode; bg: string
   if (channel.kind === 'dm') {
     return { icon: <User size={20} color={colors.gold} />, bg: colors.goldMuted }
   }
+  if (channel.kind === 'vault') {
+    return { icon: <TrendingUp size={20} color={colors.gold} />, bg: colors.goldMuted }
+  }
   if (channel.isPrivate) {
     return { icon: <Lock size={20} color={colors.primary} />, bg: colors.neonMuted }
   }
@@ -44,11 +48,27 @@ function displayName(channel: PearChannel): string {
 export function ChannelListItem({ channel, lastMessage, lastActivityAt, onPress }: Props) {
   const { icon, bg } = avatarVisual(channel)
   const time = timeAgo(lastActivityAt ?? channel.createdAt)
-  const preview = lastMessage ?? (channel.kind === 'dm' ? 'Encrypted P2P' : channel.isPrivate ? 'Private channel' : 'Public channel')
+  const preview =
+    lastMessage ??
+    (channel.kind === 'vault'
+      ? 'Token-gated investor room'
+      : channel.kind === 'dm'
+        ? 'Encrypted P2P'
+        : channel.isPrivate
+          ? 'Private channel'
+          : 'Public channel')
 
   return (
     <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.7}>
-      <View style={[styles.avatar, { backgroundColor: bg }]}>{icon}</View>
+      {channel.kind === 'dm' ? (
+        <ChatAvatar
+          avatarData={channel.peerAvatarData}
+          seed={channel.peerPubkey || channel.id}
+          size={46}
+        />
+      ) : (
+        <View style={[styles.avatar, { backgroundColor: bg }]}>{icon}</View>
+      )}
 
       <View style={styles.body}>
         <View style={styles.titleRow}>

@@ -7,7 +7,9 @@ import { theme } from '@/constants/theme'
 import { usePearChat } from '@/context/pear-chat'
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation'
 import { useOnChainHandle } from '@/hooks/use-on-chain-handle'
+import { useProfileVaults } from '@/hooks/use-profile-vaults'
 import { useScreenTopPadding } from '@/hooks/use-screen-top-padding'
+import { useVaultInvestorChat } from '@/hooks/use-vault-investor-chat'
 import { useWalletPortfolio } from '@/hooks/use-wallet-portfolio'
 import type { PearChannel, PearMessage } from '@/types/pear'
 import {
@@ -17,6 +19,7 @@ import {
   MessageCircle,
   Plus,
   Search,
+  TrendingUp,
   Users,
   X,
 } from 'lucide-react-native'
@@ -60,6 +63,7 @@ function matchesQuery(channel: PearChannel, query: string): boolean {
     channel.name.toLowerCase().includes(q) ||
     (channel.peerHandle?.toLowerCase().includes(q) ?? false) ||
     (channel.kind === 'dm' ? 'direct message'.includes(q) : false) ||
+    (channel.kind === 'vault' ? 'vault investor'.includes(q) : false) ||
     (channel.isPrivate ? 'private' : 'public').includes(q)
   )
 }
@@ -68,6 +72,8 @@ export default function ChannelsScreen() {
   const topPadding = useScreenTopPadding()
   const router = useDebouncedNavigation()
   const { address } = useWalletPortfolio()
+  const { tipsterVault } = useProfileVaults(address ?? '')
+  const { busy: vaultChatBusy, openTipsterVaultChat } = useVaultInvestorChat()
   const { handle: onChainHandle, hasHandle, isLoading: isHandleLoading } = useOnChainHandle(address)
   const {
     ready,
@@ -85,6 +91,7 @@ export default function ChannelsScreen() {
     refreshContacts,
     onContactsChanged,
     onMessage,
+    getHistory,
   } = usePearChat()
   const [joinVisible, setJoinVisible] = useState(false)
   const [dmVisible, setDmVisible] = useState(false)
@@ -97,19 +104,54 @@ export default function ChannelsScreen() {
   const activityRef = useRef<Map<string, { ts: number; text: string }>>(new Map())
   const [, forceTick] = useState(0)
 
-  const ownedChannels = useMemo(
-    () => channels.filter((c) => c.ownerPubkey === identity?.pubkey && c.kind !== 'dm'),
-    [channels, identity?.pubkey],
-  )
+  const listedChannels = useMemo(() => {
+    const publicChannels = channels.filter((channel) => channel.canonicalPublic)
+    const vaultChannels = channels.filter((channel) => channel.kind === 'vault')
+    const seen = new Set<string>()
+    const merged: PearChannel[] = []
+    for (const channel of [...publicChannels, ...vaultChannels, ...dms]) {
+      if (seen.has(channel.id)) continue
+      seen.add(channel.id)
+      merged.push(channel)
+    }
+    return merged
+  }, [channels, dms])
 
   // Live last-message / last-activity tracking (Telegram-style recency ordering).
   useEffect(() => {
     const unsub = onMessage((msg: PearMessage) => {
-      activityRef.current.set(msg.channelId, { ts: msg.timestamp, text: msg.text })
+      activityRef.current.set(msg.channelId, {
+        ts: msg.timestamp,
+        text: `${msg.author}: ${msg.text}`,
+      })
       forceTick((n) => n + 1)
     })
     return unsub
   }, [onMessage])
+
+  useEffect(() => {
+    if (!ready) return
+    let active = true
+    void Promise.all(
+      listedChannels.map(async (channel) => {
+        try {
+          const history = await getHistory(channel.id)
+          const last = history[history.length - 1]
+          if (active && last) {
+            activityRef.current.set(channel.id, {
+              ts: last.timestamp,
+              text: `${last.author}: ${last.text}`,
+            })
+          }
+        } catch (_) {}
+      })
+    ).then(() => {
+      if (active) forceTick((n) => n + 1)
+    })
+    return () => {
+      active = false
+    }
+  }, [getHistory, listedChannels, ready])
 
   useEffect(() => {
     ensureStarted().catch((bootError) => {
@@ -132,26 +174,22 @@ export default function ChannelsScreen() {
   }, [address, hasHandle, onChainHandle, ready, syncOnChainPresence])
 
   const rows = useMemo(() => {
-    const unified = [...dms, ...ownedChannels]
-    const withMeta = buildChatRows(unified, activityRef.current)
+    const withMeta = buildChatRows(listedChannels, activityRef.current)
     const filtered = withMeta.filter((row) => matchesQuery(row.channel, query))
-    return filtered.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
-  }, [dms, ownedChannels, query, ready, channels])
+    return filtered.sort((a, b) => {
+      const rank = (row: ChatRow) =>
+        row.channel.canonicalPublic ? 0 : row.channel.kind === 'vault' ? 1 : 2
+      return rank(a) - rank(b) || b.lastActivityAt - a.lastActivityAt
+    })
+  }, [listedChannels, query, ready, channels])
 
-  const handleCreateChannel = async (isPrivate: boolean) => {
-    setBusy(true)
-    try {
-      const label = isPrivate ? 'Private' : 'Public'
-      const count = isPrivate
-        ? ownedChannels.filter((c) => c.isPrivate).length
-        : ownedChannels.filter((c) => !c.isPrivate).length
-      const channel = await createChannel(`${label} ${count + 1}`, isPrivate)
-      router.push(`/channel/${channel.id}`)
-    } catch (createError) {
-      Alert.alert('Create failed', String(createError))
-    } finally {
-      setBusy(false)
+  const handleOpenVaultChat = async () => {
+    if (!tipsterVault || !address) {
+      Alert.alert('Vault required', 'Create your tipster vault in Profile first.')
+      router.push('/profile')
+      return
     }
+    await openTipsterVaultChat(tipsterVault)
   }
 
   const handleJoin = async () => {
@@ -259,26 +297,16 @@ export default function ChannelsScreen() {
           <MessageCircle size={16} color={colors.onPrimary} />
           <Text style={styles.actionPrimaryText}>Message</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.actionChip}
-          onPress={() => handleCreateChannel(false)}
-          disabled={busy}
-        >
-          <Megaphone size={16} color={colors.primary} />
-          <Text style={styles.actionText}>Public</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.actionChip}
-          onPress={() => handleCreateChannel(true)}
-          disabled={busy}
-        >
-          <Lock size={16} color={colors.primary} />
-          <Text style={styles.actionText}>Private</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionChip} onPress={() => setJoinVisible(true)}>
-          <Users size={16} color={colors.primary} />
-          <Text style={styles.actionText}>Join</Text>
-        </TouchableOpacity>
+        {tipsterVault ? (
+          <TouchableOpacity
+            style={[styles.actionChip, styles.actionVault]}
+            onPress={() => void handleOpenVaultChat()}
+            disabled={busy || vaultChatBusy}
+          >
+            <TrendingUp size={16} color={colors.gold} />
+            <Text style={styles.actionVaultText}>Vault</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {!isHandleLoading && !hasHandle ? (
@@ -331,14 +359,6 @@ export default function ChannelsScreen() {
               <Text style={styles.sectionTitle}>
                 {query ? `${rows.length} result${rows.length === 1 ? '' : 's'}` : 'Chats'}
               </Text>
-              <TouchableOpacity
-                style={styles.newBtn}
-                onPress={() => handleCreateChannel(false)}
-                disabled={busy}
-              >
-                <Plus size={15} color={colors.primary} />
-                <Text style={styles.newBtnText}>New</Text>
-              </TouchableOpacity>
             </View>
           </View>
         }
@@ -519,6 +539,15 @@ const styles = StyleSheet.create({
   actionPrimary: {
     backgroundColor: colors.primary,
     borderColor: colors.primary,
+  },
+  actionVault: {
+    borderColor: colors.goldMuted,
+    backgroundColor: colors.goldMuted,
+  },
+  actionVaultText: {
+    color: colors.gold,
+    fontSize: 12,
+    fontWeight: '700',
   },
   actionText: {
     color: colors.primary,

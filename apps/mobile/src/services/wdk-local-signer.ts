@@ -161,3 +161,9 @@ export async function signEvmTypedData(
     message: typedData.message,
   })
 }
+
+export async function signEvmPersonalMessage(message: string): Promise<Hex> {
+  const mnemonic = await resolveWalletMnemonic()
+  const account = getViemAccount(mnemonic)
+  return account.signMessage({ message })
+}

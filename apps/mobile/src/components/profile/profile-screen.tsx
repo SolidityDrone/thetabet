@@ -6,9 +6,10 @@ import { TIPSTER_NAME_PATTERN, TIPSTER_NAME_NO_EDGE_UNDERSCORE } from '@/config/
 import { shortenAddress } from '@/config/chains'
 import { useWalletPortfolio } from '@/hooks/use-wallet-portfolio'
 import { formatTipsterHandle, useProfileVaults, vaultStatsSummary } from '@/hooks/use-profile-vaults'
+import { useVaultInvestorChat } from '@/hooks/use-vault-investor-chat'
 import { createTipsterVault, registerTipsterName } from '@/services/theta-vault'
 import { isThetaDeployed, THETA_SINGLETON_ADDRESS } from '@/config/theta'
-import { RefreshCw, TrendingUp } from 'lucide-react-native'
+import { RefreshCw, TrendingUp, MessageCircle } from 'lucide-react-native'
 import { useCallback, useState } from 'react'
 import {
   ActivityIndicator,
@@ -58,6 +59,7 @@ export function ProfileScreen() {
   const { address, shortAddress, hasSkippedWallet } = useWalletPortfolio()
   const { positions, tipsterVault, tipsterHandle, onChainHasVault, vaultFromIndexer, isTipster, isLoading, isIndexerLoading, error, refresh } =
     useProfileVaults(address)
+  const { ready: chatReady, busy: vaultChatBusy, openTipsterVaultChat } = useVaultInvestorChat()
   const [vaultName, setVaultName] = useState('')
   const [vaultSymbol, setVaultSymbol] = useState('')
   const [handle, setHandle] = useState('')
@@ -254,6 +256,20 @@ export function ProfileScreen() {
             </Text>
           </View>
           {tipsterVault ? <VaultStatsCard title="Your tipster vault" vault={tipsterVault} /> : null}
+          {tipsterVault ? (
+            <Pressable
+              style={[styles.chatButton, (!chatReady || vaultChatBusy) && styles.buttonDisabled]}
+              onPress={() => void openTipsterVaultChat(tipsterVault)}
+              disabled={!chatReady || vaultChatBusy}
+            >
+              {vaultChatBusy ? (
+                <ActivityIndicator color={colors.black} size="small" />
+              ) : (
+                <MessageCircle color={colors.black} size={16} />
+              )}
+              <Text style={styles.chatButtonText}>Open vault investor chat</Text>
+            </Pressable>
+          ) : null}
           {tipsterVault && !vaultFromIndexer ? (
             <View style={styles.warningCard}>
               <Text style={styles.warningTitle}>Indexer catching up</Text>
@@ -413,6 +429,21 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     alignItems: 'center',
     marginTop: 4,
+  },
+  chatButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: colors.primary,
+    borderRadius: theme.radius.sharp,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+  },
+  chatButtonText: {
+    color: colors.black,
+    fontSize: 14,
+    fontWeight: '800',
   },
   buttonDisabled: {
     opacity: 0.7,

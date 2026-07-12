@@ -23,15 +23,14 @@ export function dmIdForPeers (pubkeyA, pubkeyB) {
 }
 
 function encryptionKeyPairFromIdentity (identity) {
-  const seed = identity.secretKey.subarray(0, 32)
-  return crypto.encryptionKeyPair(seed)
+  const secretKey = b4a.alloc(sodium.crypto_box_SECRETKEYBYTES)
+  sodium.crypto_sign_ed25519_sk_to_curve25519(secretKey, identity.secretKey)
+  return { secretKey }
 }
 
 function ed25519PublicToCurve25519 (edPublicKey) {
   const curvePublic = b4a.alloc(sodium.crypto_box_PUBLICKEYBYTES)
-  if (!sodium.crypto_sign_ed25519_pk_to_curve25519(curvePublic, edPublicKey)) {
-    throw new Error('Invalid peer public key')
-  }
+  sodium.crypto_sign_ed25519_pk_to_curve25519(curvePublic, edPublicKey)
   return curvePublic
 }
 

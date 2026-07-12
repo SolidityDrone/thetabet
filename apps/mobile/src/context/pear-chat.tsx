@@ -4,6 +4,13 @@ import {
   assertWalletOwnsHandle,
   normalizeTipsterHandle,
 } from '@/services/tipster-handle'
+import {
+  buildVaultChannelSignMessage,
+  checkVaultChannelAccess,
+  verifyVaultChannelMessageSignature,
+} from '@/services/vault-channel-gate'
+import { signEvmPersonalMessage } from '@/services/wdk-local-signer'
+import { getPolygonWalletAddress } from '@/services/wdk-address'
 import type {
   JoinChannelResult,
   PearChannel,
@@ -11,6 +18,7 @@ import type {
   PearHandleLookup,
   PearIdentity,
   PearMessage,
+  PearOnlinePeer,
   TipsterProfile,
 } from '@/types/pear'
 import { documentDirectory } from 'expo-file-system/legacy'
@@ -27,6 +35,16 @@ import RPC from 'bare-rpc'
 import { Worklet } from 'react-native-bare-kit'
 import pearBundle from '../../pear-end.bundle.js'
 
+const VAULT_SESSION_TTL_MS = 24 * 60 * 60 * 1000
+
+type VaultSessionProof = {
+  wallet: string
+  walletSignature: string
+  sharesSnapshot: string
+  signedAt: number
+  expiresAt: number
+}
+
 type PearChatContextValue = {
   ready: boolean
   error: string | null
@@ -36,13 +54,39 @@ type PearChatContextValue = {
   dms: PearChannel[]
   tipsterProfile: TipsterProfile | null
   createChannel: (name: string, isPrivate: boolean) => Promise<PearChannel>
+  createVaultChannel: (params: {
+    name: string
+    vaultAddress: string
+    tipsterAddress: string
+    minShares?: string
+  }) => Promise<PearChannel>
+  joinVaultChannel: (params: {
+    vaultAddress: string
+    tipsterAddress: string
+    name?: string
+    minShares?: string
+    devBypassTag?: string
+  }) => Promise<JoinChannelResult>
+  ensureVaultSessionProof: (channel: PearChannel) => Promise<void>
   joinChannel: (topicKey: string, name?: string) => Promise<JoinChannelResult>
   sendMessage: (channelId: string, text: string) => Promise<PearMessage>
+  checkVaultChannelAccessForWallet: (
+    channel: PearChannel,
+    walletAddress: string
+  ) => Promise<Awaited<ReturnType<typeof checkVaultChannelAccess>>>
   getHistory: (channelId: string) => Promise<PearMessage[]>
+  pingChannelPresence: (
+    channelId: string,
+    params?: { wallet?: string; role?: string; label?: string }
+  ) => Promise<void>
+  getChannelOnline: (channelId: string) => Promise<PearOnlinePeer[]>
   shareChannelKey: (channelId: string, peerPubkey: string) => Promise<PearMessage>
   setTipsterProfile: (
     profile: Partial<TipsterProfile> & { displayName: string }
   ) => Promise<TipsterProfile>
+  setChatAvatar: (
+    params: { imageBase64: string; mimeType?: string } | { clear: true }
+  ) => Promise<PearIdentity>
   refreshChannels: () => Promise<void>
   refreshProfile: () => Promise<void>
   syncOnChainPresence: (handle: string, walletAddress: string) => Promise<PearHandleLookup>
@@ -74,6 +118,20 @@ function toBareStoragePath(uri: string) {
   return path.endsWith('/') ? path.slice(0, -1) : path
 }
 
+const PEAR_LOCK_ERROR = /could not be locked/i
+const PEAR_BOOT_ATTEMPTS = 4
+const PEAR_WDK_BOOT_DELAY_MS = 800
+const PEAR_WORKLET_SETTLE_MS = 600
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isPearLockError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  return PEAR_LOCK_ERROR.test(message)
+}
+
 async function callRpc<T>(
   rpc: RPC,
   command: number,
@@ -83,12 +141,21 @@ async function callRpc<T>(
   const req = rpc.request(command)
   req.send(Buffer.from(payload ? JSON.stringify(payload) : '') as never)
 
-  const reply = await Promise.race([
-    req.reply(),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Pear RPC command ${command} timed out`)), timeoutMs)
-    ),
-  ])
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  let reply: Awaited<ReturnType<typeof req.reply>>
+  try {
+    reply = await Promise.race([
+      req.reply(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Pear RPC command ${command} timed out`)),
+          timeoutMs
+        )
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
 
   const data = decodeJson<T & { error?: string }>(reply)
   if (data && typeof data === 'object' && 'error' in data && data.error) {
@@ -103,6 +170,8 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
   const messageListenersRef = useRef<Set<(message: PearMessage) => void>>(new Set())
   const contactsListenersRef = useRef<Set<() => void>>(new Set())
   const bootPromiseRef = useRef<Promise<void> | null>(null)
+  const readyRef = useRef(false)
+  const vaultSessionProofsRef = useRef<Map<string, VaultSessionProof>>(new Map())
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [identity, setIdentity] = useState<PearIdentity | null>(null)
@@ -115,12 +184,48 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
   })
   const [dms, setDms] = useState<PearChannel[]>([])
 
+  const stopWorklet = useCallback(async () => {
+    const worklet = workletRef.current
+    workletRef.current = null
+    rpcRef.current = null
+    readyRef.current = false
+    setReady(false)
+
+    if (!worklet) return
+
+    try {
+      worklet.terminate()
+    } catch (_) {}
+
+    // Corestore needs the old bare thread to release its file lock.
+    await sleep(PEAR_WORKLET_SETTLE_MS)
+  }, [])
+
+  const waitForPearReady = useCallback(async (rpc: RPC) => {
+    const deadline = Date.now() + 45_000
+
+    while (Date.now() < deadline) {
+      try {
+        await callRpc(rpc, PEAR_RPC_COMMANDS.READY, undefined, 8_000)
+        return
+      } catch (readyError) {
+        if (!isPearLockError(readyError)) {
+          throw readyError
+        }
+        await sleep(400)
+      }
+    }
+
+    throw new Error('Pear chat worklet did not become ready in time')
+  }, [])
+
   const boot = useCallback(async () => {
+    if (workletRef.current && rpcRef.current && readyRef.current) {
+      return
+    }
+
     if (!documentDirectory) {
       throw new Error('documentDirectory is unavailable')
-    }
-    if (workletRef.current && rpcRef.current) {
-      return
     }
 
     const storagePath = toBareStoragePath(documentDirectory)
@@ -128,54 +233,72 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Invalid documentDirectory path')
     }
 
-    // Let WDK worklets finish booting before starting Pear (3rd bare worklet).
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    let lastError: unknown = null
 
-    const worklet = new Worklet()
-    worklet.start('/pear-end.bundle', pearBundle, [storagePath])
+    for (let attempt = 1; attempt <= PEAR_BOOT_ATTEMPTS; attempt++) {
+      await stopWorklet()
 
-    // Wait for pear-end to finish Corestore boot before RPC calls.
-    await new Promise((resolve) => setTimeout(resolve, 300))
+      try {
+        // Let wallet/QVAC bare worklets finish before opening Corestore.
+        await sleep(PEAR_WDK_BOOT_DELAY_MS + (attempt - 1) * 300)
 
-    workletRef.current = worklet
+        const worklet = new Worklet()
+        worklet.start('/pear-end.bundle', pearBundle, [storagePath])
+        workletRef.current = worklet
 
-    const rpc = new RPC(worklet.IPC as never, async (req) => {
-      if (req.command === PEAR_RPC_COMMANDS.MESSAGE_EVENT) {
-        try {
-          const message = decodeJson<PearMessage>(req.data)
-          messageListenersRef.current.forEach((listener) => listener(message))
-          req.reply('ok')
-        } catch (bootError) {
-          req.reply(JSON.stringify({ error: String(bootError) }))
-        }
+        const rpc = new RPC(worklet.IPC as never, async (req) => {
+          if (req.command === PEAR_RPC_COMMANDS.MESSAGE_EVENT) {
+            try {
+              const message = decodeJson<PearMessage>(req.data)
+              messageListenersRef.current.forEach((listener) => listener(message))
+              req.reply('ok')
+            } catch (bootError) {
+              req.reply(JSON.stringify({ error: String(bootError) }))
+            }
+            return
+          }
+
+          if (req.command === PEAR_RPC_COMMANDS.CONTACTS_CHANGED_EVENT) {
+            contactsListenersRef.current.forEach((listener) => listener())
+            req.reply('ok')
+          }
+        })
+        rpcRef.current = rpc
+
+        await waitForPearReady(rpc)
+
+        const nextIdentity = await callRpc<PearIdentity>(rpc, PEAR_RPC_COMMANDS.GET_IDENTITY)
+        const nextChannels = await callRpc<PearChannel[]>(rpc, PEAR_RPC_COMMANDS.LIST_CHANNELS)
+        const profile = await callRpc<TipsterProfile | null>(
+          rpc,
+          PEAR_RPC_COMMANDS.GET_TIPSTER_PROFILE
+        )
+        const nextContacts = await callRpc<PearContactsState>(rpc, PEAR_RPC_COMMANDS.LIST_CONTACTS)
+        const nextDms = await callRpc<PearChannel[]>(rpc, PEAR_RPC_COMMANDS.LIST_DMS)
+
+        setIdentity(nextIdentity)
+        setChannels(nextChannels)
+        setTipsterProfileState(profile)
+        setContacts(nextContacts)
+        setDms(nextDms)
+        readyRef.current = true
+        setReady(true)
+        setError(null)
         return
+      } catch (bootError) {
+        lastError = bootError
+        await stopWorklet()
+
+        if (!isPearLockError(bootError) || attempt === PEAR_BOOT_ATTEMPTS) {
+          throw bootError
+        }
+
+        await sleep(attempt * 500)
       }
+    }
 
-      if (req.command === PEAR_RPC_COMMANDS.CONTACTS_CHANGED_EVENT) {
-        contactsListenersRef.current.forEach((listener) => listener())
-        req.reply('ok')
-      }
-    })
-    rpcRef.current = rpc
-
-    await callRpc(rpc, PEAR_RPC_COMMANDS.READY)
-    const nextIdentity = await callRpc<PearIdentity>(rpc, PEAR_RPC_COMMANDS.GET_IDENTITY)
-    const nextChannels = await callRpc<PearChannel[]>(rpc, PEAR_RPC_COMMANDS.LIST_CHANNELS)
-    const profile = await callRpc<TipsterProfile | null>(
-      rpc,
-      PEAR_RPC_COMMANDS.GET_TIPSTER_PROFILE
-    )
-    const nextContacts = await callRpc<PearContactsState>(rpc, PEAR_RPC_COMMANDS.LIST_CONTACTS)
-    const nextDms = await callRpc<PearChannel[]>(rpc, PEAR_RPC_COMMANDS.LIST_DMS)
-
-    setIdentity(nextIdentity)
-    setChannels(nextChannels)
-    setTipsterProfileState(profile)
-    setContacts(nextContacts)
-    setDms(nextDms)
-    setReady(true)
-    setError(null)
-  }, [])
+    throw lastError instanceof Error ? lastError : new Error(String(lastError))
+  }, [stopWorklet, waitForPearReady])
 
   const ensureStarted = useCallback(async () => {
     if (ready) return
@@ -192,12 +315,10 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     return () => {
-      workletRef.current?.terminate()
-      workletRef.current = null
-      rpcRef.current = null
+      void stopWorklet()
       bootPromiseRef.current = null
     }
-  }, [])
+  }, [stopWorklet])
 
   const refreshContacts = useCallback(async () => {
     const rpc = rpcRef.current
@@ -261,22 +382,187 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
     [ensureStarted, refreshChannels]
   )
 
+  const checkVaultChannelAccessForWallet = useCallback(
+    async (channel: PearChannel, walletAddress: string) => {
+      if (channel.kind !== 'vault' || !channel.vaultAddress || !channel.tipsterAddress) {
+        return { allowed: true, role: 'owner' as const, shares: 0n }
+      }
+      return checkVaultChannelAccess(
+        channel.vaultAddress as `0x${string}`,
+        channel.tipsterAddress as `0x${string}`,
+        walletAddress as `0x${string}`,
+        BigInt(channel.minShares ?? '1')
+      )
+    },
+    []
+  )
+
+  const ensureVaultSessionProof = useCallback(
+    async (channel: PearChannel) => {
+      if (channel.kind !== 'vault' || !channel.vaultAddress || !channel.tipsterAddress) return
+
+      const cached = vaultSessionProofsRef.current.get(channel.id)
+      if (cached && cached.expiresAt > Date.now()) return
+
+      const wallet = await getPolygonWalletAddress()
+      if (!wallet) throw new Error('Unlock your wallet to join the vault channel')
+
+      const access = await checkVaultChannelAccess(
+        channel.vaultAddress as `0x${string}`,
+        channel.tipsterAddress as `0x${string}`,
+        wallet as `0x${string}`,
+        BigInt(channel.minShares ?? '1')
+      )
+      if (!access.allowed) {
+        throw new Error(access.reason ?? 'You need vault shares to join this channel')
+      }
+
+      const signedAt = Date.now()
+      const walletSignature = await signEvmPersonalMessage(
+        buildVaultChannelSignMessage({
+          channelId: channel.id,
+          vaultAddress: channel.vaultAddress,
+          wallet: wallet as `0x${string}`,
+          shares: access.shares,
+          timestamp: signedAt,
+        })
+      )
+
+      vaultSessionProofsRef.current.set(channel.id, {
+        wallet,
+        walletSignature,
+        sharesSnapshot: access.shares.toString(),
+        signedAt,
+        expiresAt: signedAt + VAULT_SESSION_TTL_MS,
+      })
+    },
+    []
+  )
+
+  const createVaultChannel = useCallback(
+    async (params: {
+      name: string
+      vaultAddress: string
+      tipsterAddress: string
+      minShares?: string
+    }) => {
+      await ensureStarted()
+      const rpc = rpcRef.current
+      if (!rpc) throw new Error('Pear chat is not ready')
+      const channel = await callRpc<PearChannel>(rpc, PEAR_RPC_COMMANDS.CREATE_VAULT_CHANNEL, params)
+      await ensureVaultSessionProof(channel)
+      await refreshChannels()
+      return channel
+    },
+    [ensureStarted, ensureVaultSessionProof, refreshChannels]
+  )
+
+  const joinVaultChannel = useCallback(
+    async (params: {
+      vaultAddress: string
+      tipsterAddress: string
+      name?: string
+      minShares?: string
+      devBypassTag?: string
+    }) => {
+      await ensureStarted()
+      const rpc = rpcRef.current
+      if (!rpc) throw new Error('Pear chat is not ready')
+      const result = await callRpc<JoinChannelResult>(rpc, PEAR_RPC_COMMANDS.JOIN_VAULT_CHANNEL, params)
+      await ensureVaultSessionProof(result.channel)
+      await refreshChannels()
+      return result
+    },
+    [ensureStarted, ensureVaultSessionProof, refreshChannels]
+  )
+
   const sendMessage = useCallback(
     async (channelId: string, text: string) => {
       await ensureStarted()
       const rpc = rpcRef.current
       if (!rpc) throw new Error('Pear chat is not ready')
+
+      const channel = channels.find((entry) => entry.id === channelId)
+      if (channel?.kind === 'vault' && channel.vaultAddress && channel.tipsterAddress) {
+        let proof = vaultSessionProofsRef.current.get(channelId)
+        if (!proof || proof.expiresAt <= Date.now()) {
+          await ensureVaultSessionProof(channel)
+          proof = vaultSessionProofsRef.current.get(channelId)
+        }
+        if (!proof) throw new Error('Vault chat session is not ready — reopen the channel')
+
+        return callRpc<PearMessage>(rpc, PEAR_RPC_COMMANDS.SEND_MESSAGE, {
+          channelId,
+          text,
+          wallet: proof.wallet,
+          walletSignature: proof.walletSignature,
+          sharesSnapshot: proof.sharesSnapshot,
+          signedAt: proof.signedAt,
+        })
+      }
+
       return callRpc<PearMessage>(rpc, PEAR_RPC_COMMANDS.SEND_MESSAGE, { channelId, text })
     },
-    [ensureStarted]
+    [channels, ensureStarted, ensureVaultSessionProof]
   )
+
+  const decorateVaultMessages = useCallback(async (channel: PearChannel, history: PearMessage[]) => {
+    if (channel.kind !== 'vault' || !channel.vaultAddress) return history
+    return Promise.all(
+      history.map(async (message) => {
+        if (message.gateBypass) {
+          return { ...message, walletVerified: true }
+        }
+        if (!message.wallet || !message.walletSignature) {
+          return { ...message, walletVerified: false }
+        }
+        const walletVerified = await verifyVaultChannelMessageSignature({
+          channelId: message.channelId,
+          vaultAddress: channel.vaultAddress!,
+          wallet: message.wallet,
+          walletSignature: message.walletSignature,
+          sharesSnapshot: message.sharesSnapshot,
+          signedAt: message.signedAt,
+        })
+        return { ...message, walletVerified }
+      })
+    )
+  }, [])
 
   const getHistory = useCallback(
     async (channelId: string) => {
       await ensureStarted()
       const rpc = rpcRef.current
       if (!rpc) throw new Error('Pear chat is not ready')
-      return callRpc<PearMessage[]>(rpc, PEAR_RPC_COMMANDS.GET_HISTORY, { channelId })
+      const history = await callRpc<PearMessage[]>(rpc, PEAR_RPC_COMMANDS.GET_HISTORY, { channelId })
+      const channel = channels.find((entry) => entry.id === channelId)
+      if (!channel || channel.kind !== 'vault') return history
+      return decorateVaultMessages(channel, history)
+    },
+    [channels, decorateVaultMessages, ensureStarted]
+  )
+
+  const pingChannelPresence = useCallback(
+    async (channelId: string, params?: { wallet?: string; role?: string; label?: string }) => {
+      await ensureStarted()
+      const rpc = rpcRef.current
+      if (!rpc) throw new Error('Pear chat is not ready')
+      await callRpc(rpc, PEAR_RPC_COMMANDS.PING_CHANNEL_PRESENCE, {
+        channelId,
+        wallet: params?.wallet,
+        role: params?.role,
+        label: params?.label,
+      })
+    },
+    [ensureStarted]
+  )
+
+  const getChannelOnline = useCallback(
+    async (channelId: string) => {
+      await ensureStarted()
+      const rpc = rpcRef.current
+      if (!rpc) throw new Error('Pear chat is not ready')
+      return callRpc<PearOnlinePeer[]>(rpc, PEAR_RPC_COMMANDS.GET_CHANNEL_ONLINE, { channelId })
     },
     [ensureStarted]
   )
@@ -306,6 +592,22 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
       )
       setTipsterProfileState(nextProfile)
       return nextProfile
+    },
+    [ensureStarted]
+  )
+
+  const setChatAvatar = useCallback(
+    async (params: { imageBase64: string; mimeType?: string } | { clear: true }) => {
+      await ensureStarted()
+      const rpc = rpcRef.current
+      if (!rpc) throw new Error('Pear chat is not ready')
+      const nextIdentity = await callRpc<PearIdentity>(
+        rpc,
+        PEAR_RPC_COMMANDS.SET_CHAT_AVATAR,
+        params
+      )
+      setIdentity(nextIdentity)
+      return nextIdentity
     },
     [ensureStarted]
   )
@@ -421,11 +723,18 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
       contacts,
       dms,
       createChannel,
+      createVaultChannel,
+      joinVaultChannel,
+      ensureVaultSessionProof,
       joinChannel,
       sendMessage,
+      checkVaultChannelAccessForWallet,
       getHistory,
+      pingChannelPresence,
+      getChannelOnline,
       shareChannelKey,
       setTipsterProfile,
+      setChatAvatar,
       syncOnChainPresence,
       lookupHandle,
       sendContactRequest,
@@ -448,11 +757,18 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
       contacts,
       dms,
       createChannel,
+      createVaultChannel,
+      joinVaultChannel,
+      ensureVaultSessionProof,
       joinChannel,
       sendMessage,
+      checkVaultChannelAccessForWallet,
       getHistory,
+      pingChannelPresence,
+      getChannelOnline,
       shareChannelKey,
       setTipsterProfile,
+      setChatAvatar,
       syncOnChainPresence,
       lookupHandle,
       sendContactRequest,

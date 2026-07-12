@@ -44,8 +44,15 @@ class PricingService {
 
       this.isInitialized = true;
     } catch (error) {
-      console.error('Failed to initialize pricing service:', error);
-      throw error;
+      console.warn('Pricing service offline — fiat values unavailable:', error)
+      this.fiatExchangeRateCache = {
+        [FiatCurrency.USD]: {
+          [AssetTicker.BTC]: 0,
+          [AssetTicker.USDT]: 1,
+          [AssetTicker.XAUT]: 0,
+        },
+      }
+      this.isInitialized = true
     }
   }
 

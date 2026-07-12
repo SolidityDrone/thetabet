@@ -13,6 +13,7 @@ import {
   verifyCanonical,
 } from './crypto.mjs'
 import { attachJsonFramer, writeJsonFrame } from './socket-framer.mjs'
+import { attachRoomTransport } from './room-transport.mjs'
 
 const CONTACTS_FILE = 'contacts.json'
 const HANDLE_TOPIC_PREFIX = 'thetabet-handle:'
@@ -68,6 +69,7 @@ export function createDmMixin (chat) {
           type: 'handle-info',
           handle,
           pubkey: myPubkeyHex(chat.identity),
+          avatarData: chat.identity.avatarData || null,
           timestamp: Date.now(),
         }
         payload.signature = signCanonical(chat.identity, payload)
@@ -86,6 +88,7 @@ export function createDmMixin (chat) {
             id: frame.payload.id,
             fromPubkey: frame.fromPubkey,
             fromHandle: frame.payload.fromHandle || null,
+            fromAvatarData: frame.payload.fromAvatarData || null,
             note: frame.payload.note || '',
             timestamp: frame.payload.timestamp,
           })
@@ -107,6 +110,7 @@ export function createDmMixin (chat) {
         if (frame.payload.accepted) {
           await chat.acceptDmSession(myPubkeyHex(chat.identity), frame.fromPubkey, {
             peerHandle: frame.payload.fromHandle || null,
+            peerAvatarData: frame.payload.fromAvatarData || null,
             myHandle: chat.registeredHandle,
           })
         }
@@ -133,7 +137,7 @@ export function createDmMixin (chat) {
       const topic = topicFromLabel(HANDLE_TOPIC_PREFIX, b4a.from(normalized))
       chat.handleDiscovery = chat.contactSwarm.join(topic, { server: true, client: true })
       await chat.ensureContactListener()
-      return { handle: normalized, pubkey: myPubkeyHex(chat.identity) }
+      return { handle: normalized, pubkey: myPubkeyHex(chat.identity), avatarData: chat.identity.avatarData || null }
     },
 
     async lookupHandle (handle, timeoutMs = 8000) {
@@ -167,7 +171,11 @@ export function createDmMixin (chat) {
             const ok = verifyCanonical(frame.pubkey, payload, frame.signature)
             if (!ok) return
             if (normalizeHandle(frame.handle) !== normalized) return
-            finish(null, { handle: normalized, pubkey: frame.pubkey })
+            finish(null, {
+              handle: normalized,
+              pubkey: frame.pubkey,
+              avatarData: frame.avatarData || null,
+            })
           })
 
           writeJsonFrame(socket, { type: 'handle-lookup', handle: normalized })
@@ -184,6 +192,7 @@ export function createDmMixin (chat) {
       const payload = {
         id: requestId,
         fromHandle: chat.registeredHandle || null,
+        fromAvatarData: chat.identity.avatarData || null,
         fromPubkey,
         toHandle: peer.handle,
         toPubkey: peer.pubkey,
@@ -258,6 +267,7 @@ export function createDmMixin (chat) {
       if (accept) {
         await chat.acceptDmSession(myPubkeyHex(chat.identity), incoming.fromPubkey, {
           peerHandle: incoming.fromHandle,
+          peerAvatarData: incoming.fromAvatarData || null,
           myHandle: chat.registeredHandle,
         })
       }
@@ -266,6 +276,7 @@ export function createDmMixin (chat) {
         id: requestId,
         accepted: Boolean(accept),
         fromHandle: chat.registeredHandle || null,
+        fromAvatarData: chat.identity.avatarData || null,
         timestamp: Date.now(),
       }
       const signature = signCanonical(chat.identity, payload)
@@ -311,18 +322,23 @@ export function createDmMixin (chat) {
           ownerPubkey: myPubkeyHex(chat.identity),
           peerPubkey,
           peerHandle: meta.peerHandle || null,
+          peerAvatarData: meta.peerAvatarData || null,
           isPrivate: true,
           createdAt: Date.now(),
         }
         chat.directory.push(channel)
         chat.saveDirectory()
         await chat.attachDmChannel(channel)
+      } else if (meta.peerAvatarData && existing.peerAvatarData !== meta.peerAvatarData) {
+        existing.peerAvatarData = meta.peerAvatarData
+        chat.saveDirectory()
       }
 
       const accepted = {
         dmId,
         peerPubkey,
         peerHandle: meta.peerHandle || null,
+        peerAvatarData: meta.peerAvatarData || null,
         acceptedAt: Date.now(),
       }
       if (!chat.contacts.accepted.some((row) => row.dmId === dmId)) {
@@ -343,44 +359,47 @@ export function createDmMixin (chat) {
     async attachDmChannel (channel) {
       if (chat.channels.has(channel.id)) return
 
-      const outCore = chat.store.get({ name: 'dm-out-' + channel.id })
-      await outCore.ready()
-      const inCore = chat.store.get({ name: 'dm-in-' + channel.id })
-      await inCore.ready()
+      const core = chat.store.get({ name: 'dm-history-v2-' + channel.id })
+      await core.ready()
+      const runtime = { core, kind: 'dm', seen: new Set(), livePeerCount: 0 }
+      const myPk = myPubkeyHex(chat.identity)
 
-      const outDiscovery = chat.swarm.join(b4a.from(channel.topicKey, 'hex'), {
-        server: true,
-        client: true,
-      })
-      const inDiscovery = chat.swarm.join(b4a.from(channel.peerTopicKey, 'hex'), {
-        server: true,
-        client: true,
-      })
-
-      const self = chat
-      const onAppend = (core, isMine) => {
-        core.on('append', function () {
-          const raw = core.get(core.length - 1)
-          try {
-            const envelope = JSON.parse(b4a.toString(raw))
-            const message = self.decodeDmEnvelope(channel, envelope, isMine)
-            if (message && self.onMessage) self.onMessage(message)
-          } catch (error) {
-            console.error('pear-end dm append parse failed', error)
-          }
-        })
+      const emitEnvelope = async (envelope) => {
+        const message = chat.decodeDmEnvelope(channel, envelope, envelope.authorPubkey === myPk)
+        if (message && chat.onMessage) chat.onMessage(message)
       }
 
-      onAppend(outCore, true)
-      onAppend(inCore, false)
-
-      chat.channels.set(channel.id, {
-        core: outCore,
-        peerCore: inCore,
-        discovery: outDiscovery,
-        peerDiscovery: inDiscovery,
-        kind: 'dm',
+      core.on('append', () => {
+        core.get(core.length - 1)
+          .then((raw) => {
+            if (!raw) return
+            const envelope = JSON.parse(b4a.toString(raw))
+            runtime.seen.add(envelope.id)
+            return emitEnvelope(envelope)
+          })
+          .catch(() => {})
       })
+
+      const topicKey = topicHexFromLabel('thetabet-dm-room-v2:', b4a.from(channel.id))
+      channel.topicKey = topicKey
+      runtime.transport = attachRoomTransport({
+        topicHex: topicKey,
+        roomId: channel.id,
+        onPeerCount: (count) => { runtime.livePeerCount = count },
+        onMessage: (envelope) => {
+          if (!envelope?.id || runtime.seen.has(envelope.id)) return
+          const decoded = chat.decodeDmEnvelope(channel, envelope, false)
+          if (!decoded) return
+          runtime.seen.add(envelope.id)
+          if (envelope.authorAvatarData) {
+            channel.peerAvatarData = envelope.authorAvatarData
+            chat.saveDirectory()
+          }
+          core.append(b4a.from(JSON.stringify(envelope))).catch(() => {})
+        },
+      })
+
+      chat.channels.set(channel.id, runtime)
     },
 
     decodeDmEnvelope (channel, envelope, isMine) {
@@ -405,6 +424,10 @@ export function createDmMixin (chat) {
         kind: 'dm',
         author: envelope.authorHandle || envelope.authorPubkey.slice(0, 8),
         authorPubkey: envelope.authorPubkey,
+        avatarData:
+          envelope.authorAvatarData ||
+          (isMine ? chat.identity.avatarData : channel.peerAvatarData) ||
+          null,
         text,
         timestamp: envelope.timestamp,
         isMine,
@@ -419,28 +442,21 @@ export function createDmMixin (chat) {
       const channel = chat.directory.find((row) => row.id === dmId)
       if (!channel) return []
 
-      const cores = [runtime.core]
-      if (runtime.peerCore) cores.push(runtime.peerCore)
-
-      for (const core of cores) {
-        try {
-          await core.update()
-        } catch (error) {
-          console.error('pear-end dm core.update skipped', dmId, error)
-        }
-      }
-
       const merged = []
-      for (const core of cores) {
-        const isMine = core === runtime.core
-        for (let index = 0; index < core.length; index++) {
-          const raw = core.get(index)
-          try {
-            const envelope = JSON.parse(b4a.toString(raw))
-            const message = chat.decodeDmEnvelope(channel, envelope, isMine)
-            if (message) merged.push(message)
-          } catch (error) {}
-        }
+      const myPk = myPubkeyHex(chat.identity)
+      for (let index = 0; index < runtime.core.length; index++) {
+        try {
+          const raw = await runtime.core.get(index)
+          if (!raw) continue
+          const envelope = JSON.parse(b4a.toString(raw))
+          runtime.seen.add(envelope.id)
+          const message = chat.decodeDmEnvelope(
+            channel,
+            envelope,
+            envelope.authorPubkey === myPk
+          )
+          if (message) merged.push(message)
+        } catch (_) {}
       }
 
       merged.sort((left, right) => left.timestamp - right.timestamp)
@@ -467,12 +483,14 @@ export function createDmMixin (chat) {
         id: nowId(),
         authorPubkey: myPubkeyHex(chat.identity),
         authorHandle: chat.registeredHandle || null,
+        authorAvatarData: chat.identity.avatarData || null,
         timestamp: Date.now(),
         payload,
       }
       envelope.signature = signCanonical(chat.identity, payload)
 
       await runtime.core.append(b4a.from(JSON.stringify(envelope)))
+      runtime.transport.broadcast(envelope)
 
       return chat.decodeDmEnvelope(channel, envelope, true)
     },

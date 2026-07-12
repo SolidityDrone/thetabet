@@ -1,5 +1,6 @@
 import { VaultBetHistory } from '@/components/vaults/vault-bet-history'
 import { VaultDetailHeader } from '@/components/vaults/vault-detail-header'
+import { VaultInvestorChatButton } from '@/components/vaults/vault-investor-chat-button'
 import { VaultPositionPanel } from '@/components/vaults/vault-position-panel'
 import { ScreenBackdrop } from '@/components/ui/screen-backdrop'
 import { colors } from '@/constants/colors'
@@ -93,6 +94,12 @@ export default function VaultDetailScreen() {
                   vault={vault}
                   positionUsdt={position.positionUsdtNumber}
                   positionSharesLabel={positionSharesLabel}
+                />
+                <VaultInvestorChatButton
+                  vault={vault}
+                  walletAddress={address}
+                  isTipster={address?.toLowerCase() === vault.tipster.toLowerCase()}
+                  hasPosition={position.hasPosition}
                 />
                 <VaultBetHistory
                   bets={betHistory.bets}

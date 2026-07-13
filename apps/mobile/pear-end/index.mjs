@@ -1,6 +1,7 @@
 import RPC from 'bare-rpc'
 import { PearChat } from './chat.mjs'
 import { COMMANDS } from './commands.mjs'
+import { repairStoredIdentity } from './identity.mjs'
 import { PeerInference } from './peer-inference.mjs'
 
 const { IPC } = BareKit
@@ -162,6 +163,7 @@ async function boot () {
           replyJson(req, await peerInference.browse(parsePayload(req).timeoutMs))
           return
         case COMMANDS.REQUEST_PEER_INFERENCE:
+          activeChat.identity = repairStoredIdentity(activeChat.storagePath, activeChat.identity)
           replyJson(req, await peerInference.request(parsePayload(req)))
           return
         case COMMANDS.SEND_INFERENCE_PROGRESS:

@@ -35,9 +35,7 @@ async function ensureTranslationModel(language: Exclude<QvacOutputLanguage, 'en'
     throw new Error(`Translation to ${language} is not supported on-device yet.`)
   }
   if (!(await isTranslationModelInstalled(language))) {
-    throw new Error(
-      `Download the ${entry.label} model in Settings → Local AI → Output language first.`
-    )
+    throw new Error(`Download the ${entry.label} model in Settings → Translator first.`)
   }
 
   if (translationModelId && loadedTranslationLang === language) {

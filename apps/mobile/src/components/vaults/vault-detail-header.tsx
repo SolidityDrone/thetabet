@@ -2,6 +2,7 @@ import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { formatAverageOdds } from '@/config/theta'
 import { formatTipsterHandle, vaultStatsSummary } from '@/hooks/use-profile-vaults'
+import { formatVaultLabel } from '@/services/ponder/vault-display'
 import type { DiscoveryVault } from '@/types/vault-discovery'
 import * as Clipboard from 'expo-clipboard'
 import { Copy } from 'lucide-react-native'
@@ -65,7 +66,7 @@ export function VaultDetailHeader({ vault, positionUsdt, positionSharesLabel }: 
         <Text style={styles.ownerLabel}>Tipster</Text>
         <Text style={styles.ownerHandle}>{tipsterLabel}</Text>
         <Text style={styles.vaultMeta}>
-          Vault <Text style={styles.vaultMetaStrong}>{vault.name}</Text> · token{' '}
+          Vault <Text style={styles.vaultMetaStrong}>{formatVaultLabel(vault.name, vault.isMocked)}</Text> · token{' '}
           <Text style={styles.vaultMetaStrong}>{vault.symbol}</Text>
         </Text>
         <View style={styles.copyRow}>

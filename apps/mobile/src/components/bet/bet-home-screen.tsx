@@ -489,7 +489,6 @@ const styles = StyleSheet.create({
   skeletonList: {
     paddingHorizontal: theme.spacing.lg,
     gap: 8,
-    paddingTop: 8,
   },
   errorTitle: {
     color: colors.danger,

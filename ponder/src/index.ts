@@ -10,6 +10,8 @@ import {
   withdrawEvent,
 } from "ponder:schema";
 
+import { seedMockVaults } from "./seed-mock-vaults";
+
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 function eventId(event: { transaction: { hash: string }; log: { logIndex: number } }) {
@@ -135,6 +137,10 @@ ponder.on("ThetaSingleton:VaultMetrics", async ({ event, context }) => {
       updatedAt: timestamp,
     })
     .where(eq(vault.id, event.args.vaultId));
+});
+
+ponder.on("ThetaSingleton:setup", async ({ context }) => {
+  await seedMockVaults(context);
 });
 
 ponder.on("ThetaSingleton:VaultDeposit", async ({ event, context }) => {

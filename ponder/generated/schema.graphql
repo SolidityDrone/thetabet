@@ -53,6 +53,7 @@ type vault {
   settledLosses: Int!
   totalStaked: BigInt!
   totalPayout: BigInt!
+  isMocked: Boolean!
   createdAt: BigInt!
   updatedAt: BigInt!
   positions(where: investorPositionFilter, orderBy: String, orderDirection: String, before: String, after: String, limit: Int, offset: Int): investorPositionPage
@@ -435,6 +436,10 @@ input vaultFilter {
   totalPayout_lt: BigInt
   totalPayout_gte: BigInt
   totalPayout_lte: BigInt
+  isMocked: Boolean
+  isMocked_not: Boolean
+  isMocked_in: [Boolean]
+  isMocked_not_in: [Boolean]
   createdAt: BigInt
   createdAt_not: BigInt
   createdAt_in: [BigInt]

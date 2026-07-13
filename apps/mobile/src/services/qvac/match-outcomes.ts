@@ -45,6 +45,45 @@ export function buildOutcomeCatalog(markets: MatchMarketInput[]): OutcomeOption[
   return out
 }
 
+const MAX_INFERENCE_MARKETS = 80
+const MAX_INFERENCE_OUTCOMES = 20
+
+/** Drop empty/suspended markets before peer RPC — matches pear-end validation. */
+export function sanitizeMarketsForInference(markets: MatchMarketInput[]): MatchMarketInput[] {
+  const clean: MatchMarketInput[] = []
+
+  for (const market of markets) {
+    const conditionId = String(market?.conditionId ?? '').trim()
+    const conditionTitle = String(market?.conditionTitle ?? '').trim()
+    if (!conditionId || !conditionTitle || !Array.isArray(market.outcomes)) continue
+
+    const outcomes = market.outcomes
+      .map((outcome) => {
+        const outcomeId = String(outcome?.outcomeId ?? '').trim()
+        const title = String(outcome?.title ?? '').trim()
+        const decimalOdds = Number(outcome?.decimalOdds)
+        if (!outcomeId || !title || !Number.isFinite(decimalOdds) || decimalOdds <= 1) return null
+        return {
+          outcomeId,
+          title,
+          decimalOdds,
+          rawOdds:
+            typeof outcome?.rawOdds === 'string' && outcome.rawOdds.trim()
+              ? outcome.rawOdds.trim()
+              : String(decimalOdds),
+        }
+      })
+      .filter((outcome): outcome is NonNullable<typeof outcome> => outcome !== null)
+      .slice(0, MAX_INFERENCE_OUTCOMES)
+
+    if (outcomes.length === 0) continue
+    clean.push({ conditionId, conditionTitle, outcomes })
+    if (clean.length >= MAX_INFERENCE_MARKETS) break
+  }
+
+  return clean
+}
+
 function extractTaggedLine(answer: string, tag: string): string | null {
   const re = new RegExp(`^${tag}:\\s*(.+)$`, 'im')
   const m = answer.match(re)

@@ -2,6 +2,7 @@ import { colors } from '@/constants/colors'
 import { theme } from '@/constants/theme'
 import { formatAverageOdds } from '@/config/theta'
 import { formatTipsterHandle } from '@/hooks/use-profile-vaults'
+import { formatVaultLabel } from '@/services/ponder/vault-display'
 import type { DiscoveryVault } from '@/types/vault-discovery'
 import { ChevronRight, Flame, TrendingUp } from 'lucide-react-native'
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
@@ -89,7 +90,9 @@ export function VaultCard({ vault, rank, onPress }: Props) {
             {formatTipsterHandle(vault.tipsterHandle, vault.tipster)}
           </Text>
           <View style={styles.nameRow}>
-            <Text style={styles.name} numberOfLines={1}>{vault.name}</Text>
+            <Text style={styles.name} numberOfLines={1}>
+              {formatVaultLabel(vault.name, vault.isMocked)}
+            </Text>
             <Text style={styles.symbol}> · {vault.symbol}</Text>
           </View>
         </View>

@@ -35,8 +35,8 @@ export function MatchCardSkeleton({ compact }: { compact?: boolean }) {
   return (
     <View style={[styles.card, compact && styles.cardCompact]}>
       <View style={styles.cardHeader}>
-        <SkeletonBlock width={80} height={10} borderRadius={4} />
-        <SkeletonBlock width={50} height={10} borderRadius={4} />
+        <SkeletonBlock width={100} height={18} borderRadius={4} />
+        <SkeletonBlock width={56} height={16} borderRadius={4} />
       </View>
       <View style={styles.teamsRow}>
         <View style={styles.teamCol}>
@@ -63,12 +63,12 @@ export function EventPageSkeleton() {
       </View>
 
       <View style={styles.eventCardArea}>
-        <View style={[styles.card, { padding: 12 }]}>
+        <View style={styles.card}>
           <View style={styles.cardHeader}>
-            <SkeletonBlock width={100} height={12} borderRadius={4} />
-            <SkeletonBlock width={60} height={12} borderRadius={4} />
+            <SkeletonBlock width={120} height={22} borderRadius={4} />
+            <SkeletonBlock width={60} height={16} borderRadius={4} />
           </View>
-          <View style={[styles.teamsRow, { marginTop: 8 }]}>
+          <View style={styles.teamsRow}>
             <View style={styles.teamCol}>
               <SkeletonBlock width={56} height={56} borderRadius={28} />
               <SkeletonBlock width={90} height={14} borderRadius={4} />
@@ -107,7 +107,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderNeon,
     borderWidth: 1,
     borderRadius: theme.radius.md,
-    padding: 10,
+    padding: 12,
     gap: 10,
   },
   cardCompact: {

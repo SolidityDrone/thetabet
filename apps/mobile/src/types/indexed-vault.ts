@@ -15,6 +15,8 @@ export type IndexedVault = {
   totalStaked: string
   totalPayout: string
   createdAt?: string
+  /** Present when the vault row was seeded by Ponder for demo/dev browsing. */
+  isMocked?: boolean
   /** Active investors with shares > 0; null when indexer has not loaded yet. */
   subscriberCount?: number | null
 }

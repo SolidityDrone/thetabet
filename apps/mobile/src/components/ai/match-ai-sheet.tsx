@@ -11,6 +11,7 @@ import { useInferenceKeepAwake } from '@/services/keep-awake'
 import {
   attachReasonsToPicks,
   buildOutcomeCatalog,
+  sanitizeMarketsForInference,
   formatAnalysisStreamDisplay,
   formatStreamingAnalysisDisplay,
   hasThinkingNoise,
@@ -485,12 +486,17 @@ export function MatchAiSheet({
     setActivity(`Connecting to ${peer.handle ? `@${peer.handle}` : peer.pubkey.slice(0, 8)}…`)
 
     try {
+      const inferenceMarkets = sanitizeMarketsForInference(markets)
+      if (inferenceMarkets.length === 0) {
+        throw new Error('No bettable outcomes — wait for active odds, then try again.')
+      }
+
       const accepted = await requestPeerInference(peer.pubkey, {
         gameId,
         matchTitle,
         startsAt,
         league,
-        markets,
+        markets: inferenceMarkets,
       })
       remoteRequestIdRef.current = accepted.requestId
       setRemoteProvider(accepted.provider ?? peer)
@@ -628,7 +634,11 @@ export function MatchAiSheet({
                     </TouchableOpacity>
                   </View>
                   {!browsingPeers && peers.length === 0 ? (
-                    <Text style={styles.sourceHint}>No opted-in peers found. Try again shortly.</Text>
+                    <Text style={styles.sourceHint}>
+                      {error
+                        ? error
+                        : 'No peers found. Run stub on PC, then `adb reverse tcp:39391 tcp:39391` on USB/hotspot, and Refresh.'}
+                    </Text>
                   ) : null}
                   {peers.map((peer) => (
                     <TouchableOpacity

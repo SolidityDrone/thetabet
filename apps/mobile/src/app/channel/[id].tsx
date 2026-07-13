@@ -1,7 +1,9 @@
 import { ChatAvatar } from '@/components/pear/chat-avatar'
+import { ChatMessageRow } from '@/components/pear/chat-message-row'
 import { IdentityBadge } from '@/components/pear/identity-badge'
 import { colors } from '@/constants/colors'
 import { usePearChat } from '@/context/pear-chat'
+import { useChatMessageTranslation } from '@/hooks/use-chat-message-translation'
 import { useWalletPortfolio } from '@/hooks/use-wallet-portfolio'
 import { filterChatMessages, isPearSystemMessage, mergeChatMessages, PEAR_PRESENCE_PREFIX } from '@/services/pear-message-utils'
 import { ensureModelReady } from '@/services/qvac/qvac-client'
@@ -12,7 +14,7 @@ import { loadTipsterNotes } from '@/services/tipster-notes/storage'
 import { getPolygonWalletAddress } from '@/services/wdk-address'
 import type { PearMessage, PearOnlinePeer } from '@/types/pear'
 import { useLocalSearchParams } from 'expo-router'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
@@ -28,7 +30,7 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Clipboard from 'expo-clipboard'
-import { Crown, Share2, Users } from 'lucide-react-native'
+import { Share2, Users } from 'lucide-react-native'
 
 export default function ChannelScreen() {
   const { id: rawId } = useLocalSearchParams<{ id: string }>()
@@ -57,7 +59,22 @@ export default function ChannelScreen() {
   const [shareVisible, setShareVisible] = useState(false)
   const [peerPubkey, setPeerPubkey] = useState('')
   const [onlinePeers, setOnlinePeers] = useState<PearOnlinePeer[]>([])
+  const listRef = useRef<FlatList<PearMessage>>(null)
+  const hasScrolledInitially = useRef(false)
   const { address } = useWalletPortfolio()
+  const {
+    targetLanguageLabel,
+    toggleMessageTranslation,
+    getDisplayText,
+    isTranslating,
+    isShowingTranslation,
+  } = useChatMessageTranslation()
+
+  const scrollToBottom = useCallback((animated = true) => {
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToEnd({ animated })
+    })
+  }, [])
 
   const channel = useMemo(() => {
     if (!channelId) return null
@@ -142,6 +159,14 @@ export default function ChannelScreen() {
       setMessages((current) => mergeChatMessages(current, [message]))
     })
   }, [ready, channelId, getHistory, getChannelOnline, onMessage])
+
+  const lastMessageId = messages[messages.length - 1]?.id
+
+  useEffect(() => {
+    if (loading || !lastMessageId) return
+    scrollToBottom(hasScrolledInitially.current)
+    hasScrolledInitially.current = true
+  }, [loading, lastMessageId, scrollToBottom])
 
   useEffect(() => {
     if (!ready || !channelId || channel?.kind !== 'vault') return
@@ -374,9 +399,13 @@ export default function ChannelScreen() {
         </View>
       ) : (
         <FlatList
+          ref={listRef}
           data={messages}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.messages}
+          onContentSizeChange={() => {
+            if (lastMessageId) scrollToBottom(false)
+          }}
           renderItem={({ item }) => {
             const isMine = item.isMine === true || item.authorPubkey === identity?.pubkey
             const isVaultOwner =
@@ -384,80 +413,21 @@ export default function ChannelScreen() {
               item.walletVerified !== false &&
               Boolean(item.wallet) &&
               item.wallet?.toLowerCase() === channel.tipsterAddress?.toLowerCase()
-            const walletLabel = item.wallet
-              ? `${item.wallet.slice(0, 6)}…${item.wallet.slice(-4)}`
-              : item.gateBypass
-                ? 'dev bypass'
-                : null
+
             return (
-              <View style={[styles.messageRow, isMine && styles.messageRowMine]}>
-                {!isMine ? (
-                  <ChatAvatar
-                    avatarData={item.avatarData}
-                    seed={item.authorPubkey}
-                    size={34}
-                    accent={isVaultOwner ? colors.gold : undefined}
-                  />
-                ) : null}
-                <View
-                  style={[
-                    styles.bubble,
-                    isMine ? styles.mine : styles.theirs,
-                    isVaultOwner && styles.ownerBubble,
-                  ]}
-                >
-                  <View style={styles.authorRow}>
-                    {isVaultOwner ? <Crown size={12} color={colors.text} /> : null}
-                    <Text
-                      style={[
-                        styles.author,
-                        isMine ? styles.authorMine : styles.authorTheirs,
-                        isVaultOwner && styles.ownerAuthor,
-                      ]}
-                    >
-                      {item.author}
-                      {isVaultOwner ? ' · Vault owner' : ''}
-                      {walletLabel ? ` · ${walletLabel}` : ''}
-                      {item.walletVerified === false ? ' · unverified' : ''}
-                    </Text>
-                  </View>
-                  <Text
-                    style={[
-                      styles.text,
-                      isVaultOwner
-                        ? styles.ownerText
-                        : isMine
-                          ? styles.textMine
-                          : styles.textTheirs,
-                    ]}
-                  >
-                    {item.text}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.messageTime,
-                      isVaultOwner
-                        ? styles.ownerMessageTime
-                        : isMine
-                          ? styles.messageTimeMine
-                          : null,
-                    ]}
-                  >
-                    {new Date(item.timestamp).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </Text>
-                </View>
-                {isMine ? (
-                  <ChatAvatar
-                    avatarUri={identity?.avatarUri}
-                    avatarData={identity?.avatarData || item.avatarData}
-                    seed={identity?.pubkey || item.authorPubkey}
-                    size={34}
-                  />
-                ) : null}
-              </View>
+              <ChatMessageRow
+                message={item}
+                isMine={isMine}
+                isVaultOwner={isVaultOwner}
+                identityPubkey={identity?.pubkey}
+                identityAvatarUri={identity?.avatarUri}
+                identityAvatarData={identity?.avatarData}
+                displayText={getDisplayText(item.id, item.text ?? '')}
+                isTranslating={isTranslating(item.id)}
+                isShowingTranslation={isShowingTranslation(item.id)}
+                targetLanguageLabel={targetLanguageLabel}
+                onPressMessage={() => void toggleMessageTranslation(item.id, item.text ?? '')}
+              />
             )
           }}
         />
@@ -597,85 +567,17 @@ const styles = StyleSheet.create({
   },
   messages: {
     paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingTop: 12,
+    paddingBottom: 24,
     gap: 8,
-  },
-  messageRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 8,
-  },
-  messageRowMine: {
+    flexGrow: 1,
     justifyContent: 'flex-end',
-  },
-  bubble: {
-    borderRadius: 14,
-    padding: 12,
-    maxWidth: '85%',
-  },
-  mine: {
-    alignSelf: 'flex-end',
-    backgroundColor: colors.primary,
-  },
-  theirs: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderWidth: 1,
-  },
-  ownerBubble: {
-    backgroundColor: colors.goldMuted,
-    borderColor: colors.gold,
-  },
-  authorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  author: {
-    fontSize: 11,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  authorMine: {
-    color: colors.black,
-  },
-  authorTheirs: {
-    color: colors.textSecondary,
-  },
-  ownerAuthor: {
-    color: colors.text,
-  },
-  ownerText: {
-    color: colors.text,
-  },
-  text: {
-    lineHeight: 20,
-  },
-  textMine: {
-    color: colors.black,
-  },
-  textTheirs: {
-    color: colors.text,
-  },
-  messageTime: {
-    color: colors.textTertiary,
-    fontSize: 9,
-    marginTop: 4,
-    alignSelf: 'flex-end',
-  },
-  messageTimeMine: {
-    color: colors.black,
-    opacity: 0.65,
-  },
-  ownerMessageTime: {
-    color: colors.textSecondary,
   },
   composer: {
     flexDirection: 'row',
     gap: 8,
     paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingTop: 12,
     borderTopColor: colors.border,
     borderTopWidth: 1,
   },

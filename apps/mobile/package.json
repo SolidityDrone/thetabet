@@ -14,6 +14,8 @@
     "prebuild:clean": "expo prebuild --clean",
     "bundle:pear": "node scripts/dedupe-bare-fs.mjs && node scripts/generate-imports.mjs && bare-pack --target android-arm64 --target android-x64 --linked --format bundle.cjs --out pear-end.bundle.js pear-end/index.mjs",
     "pear:chat": "bare scripts/pear-chat-demo.mjs",
+    "pear:inference:stub": "fuser -k 39391/tcp 2>/dev/null || true; bare scripts/pear-inference-stub.mjs",
+    "pear:inference:browse": "bare scripts/pear-inference-browse.mjs",
     "bundle:qvac": "node scripts/bundle-qvac.mjs",
     "open:android": "node scripts/open-android.mjs",
     "test:azuro-api": "node scripts/test-azuro-api.mjs",

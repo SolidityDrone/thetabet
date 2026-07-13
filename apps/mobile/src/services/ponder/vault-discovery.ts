@@ -25,6 +25,7 @@ type PonderVaultRow = {
   totalStaked: string
   totalPayout: string
   createdAt: string
+  isMocked?: boolean
   positions?: { totalCount: number }
   bets?: {
     items: Array<{ stake: string; payout: string; lifecycle: number }>
@@ -63,6 +64,7 @@ const DISCOVER_VAULTS_QUERY = `
         totalStaked
         totalPayout
         createdAt
+        isMocked
         positions(where: { shares_gt: "0" }, limit: 1) {
           totalCount
         }
@@ -97,6 +99,7 @@ const VAULT_DETAIL_QUERY = `
       totalStaked
       totalPayout
       createdAt
+      isMocked
       positions(where: { shares_gt: "0" }, limit: 1) {
         totalCount
       }
@@ -133,6 +136,7 @@ function mapDiscoveryVault(row: PonderVaultRow): DiscoveryVault {
     totalStaked: row.totalStaked,
     totalPayout: row.totalPayout,
     createdAt: row.createdAt,
+    isMocked: row.isMocked === true,
     subscriberCount: row.positions?.totalCount ?? 0,
     averageWinOdds: calcAverageWinOdds(bets),
     roiPercent: calcRoiPercent(totalStaked, totalPayout),
@@ -192,28 +196,41 @@ function compareNullableNumberDesc(left: number | null, right: number | null) {
   return leftValue > rightValue ? -1 : 1
 }
 
+function compareRealBeforeMocked(left: DiscoveryVault, right: DiscoveryVault) {
+  const leftRank = left.isMocked ? 1 : 0
+  const rightRank = right.isMocked ? 1 : 0
+  if (leftRank !== rightRank) return leftRank - rightRank
+  return 0
+}
+
+function compareBySortKey(left: DiscoveryVault, right: DiscoveryVault, sortKey: VaultSortKey) {
+  switch (sortKey) {
+    case 'newest':
+      return compareBigIntDesc(left.createdAt, right.createdAt)
+    case 'roi':
+      return compareNullableNumberDesc(left.roiPercent, right.roiPercent)
+    case 'winrate':
+      return compareNullableNumberDesc(left.winRatePercent, right.winRatePercent)
+    case 'avg-odds':
+      return compareNullableNumberDesc(left.averageWinOdds, right.averageWinOdds)
+    case 'subscribers':
+      return (right.subscriberCount ?? 0) - (left.subscriberCount ?? 0)
+    case 'liquidity':
+      return compareBigIntDesc(left.totalAssets, right.totalAssets)
+    case 'volume':
+      return compareBigIntDesc(left.totalStaked, right.totalStaked)
+    default:
+      return 0
+  }
+}
+
 export function sortDiscoveryVaults(vaults: DiscoveryVault[], sortKey: VaultSortKey) {
   const sorted = [...vaults]
 
   sorted.sort((left, right) => {
-    switch (sortKey) {
-      case 'newest':
-        return compareBigIntDesc(left.createdAt, right.createdAt)
-      case 'roi':
-        return compareNullableNumberDesc(left.roiPercent, right.roiPercent)
-      case 'winrate':
-        return compareNullableNumberDesc(left.winRatePercent, right.winRatePercent)
-      case 'avg-odds':
-        return compareNullableNumberDesc(left.averageWinOdds, right.averageWinOdds)
-      case 'subscribers':
-        return (right.subscriberCount ?? 0) - (left.subscriberCount ?? 0)
-      case 'liquidity':
-        return compareBigIntDesc(left.totalAssets, right.totalAssets)
-      case 'volume':
-        return compareBigIntDesc(left.totalStaked, right.totalStaked)
-      default:
-        return 0
-    }
+    const realFirst = compareRealBeforeMocked(left, right)
+    if (realFirst !== 0) return realFirst
+    return compareBySortKey(left, right, sortKey)
   })
 
   return sorted

@@ -18,6 +18,7 @@ export const vault = onchainTable(
     settledLosses: t.integer().notNull().default(0),
     totalStaked: t.bigint().notNull().default(0n),
     totalPayout: t.bigint().notNull().default(0n),
+    isMocked: t.boolean().notNull().default(false),
     createdAt: t.bigint().notNull(),
     updatedAt: t.bigint().notNull(),
   }),

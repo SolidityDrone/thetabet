@@ -17,6 +17,7 @@ const imports = {
   'sodium-universal': path.join(root, 'node_modules', 'sodium-universal'),
   'bare-rpc': path.join(root, 'node_modules', 'bare-rpc'),
   'bare-kit': path.join(root, 'node_modules', 'bare-kit'),
+  'bare-tcp': path.join(root, 'node_modules', 'wdk-linked-bare-tcp'),
 }
 
 fs.writeFileSync(outPath, JSON.stringify(imports, null, 2))

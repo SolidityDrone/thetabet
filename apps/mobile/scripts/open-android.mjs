@@ -11,6 +11,7 @@ const metroUrl = encodeURIComponent(`http://127.0.0.1:${port}`);
 const deepLink = `exp+thetabet://expo-development-client/?url=${metroUrl}`;
 
 execSync(`adb reverse tcp:${port} tcp:${port}`, { stdio: 'inherit' });
+execSync('adb reverse tcp:39391 tcp:39391', { stdio: 'inherit' });
 execSync('adb reverse tcp:42069 tcp:42069', { stdio: 'inherit' });
 execSync(
   `adb shell am start -a android.intent.action.VIEW -d "${deepLink}" ${packageName}`,

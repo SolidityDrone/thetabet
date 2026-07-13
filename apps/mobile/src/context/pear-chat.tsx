@@ -821,8 +821,8 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
     const rpc = rpcRef.current
     if (!rpc) throw new Error('Pear network is not ready')
     return callRpc<PeerInferencePeer[]>(rpc, PEAR_RPC_COMMANDS.LIST_INFERENCE_PEERS, {
-      timeoutMs: 2500,
-    }, 10_000)
+      timeoutMs: 30_000,
+    }, 35_000)
   }, [ensureStarted])
 
   const requestPeerInference = useCallback(
@@ -837,7 +837,7 @@ export function PearChatProvider({ children }: { children: React.ReactNode }) {
         rpc,
         PEAR_RPC_COMMANDS.REQUEST_PEER_INFERENCE,
         { providerPubkey, input },
-        20_000
+        35_000
       )
     },
     [ensureStarted]

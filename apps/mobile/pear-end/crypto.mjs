@@ -83,3 +83,43 @@ export function verifyCanonical (publicKeyHex, payload, signatureHex) {
 export function myPubkeyHex (identity) {
   return b4a.toString(identity.publicKey, 'hex')
 }
+
+/** Deterministic JSON for cross-runtime (phone Bare vs desktop Bare) signature verify. */
+export function stableStringify (value) {
+  if (value === null || value === undefined) return 'null'
+  const valueType = typeof value
+  if (valueType === 'number' || valueType === 'boolean') return JSON.stringify(value)
+  if (valueType === 'string') return JSON.stringify(value)
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`
+  }
+  if (valueType !== 'object') return JSON.stringify(value)
+
+  const keys = Object.keys(value).sort()
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`
+}
+
+export function digestStablePayload (payload) {
+  return b4a.toString(crypto.hash(b4a.from(stableStringify(payload))), 'hex')
+}
+
+function normalizeSecretKey (identity) {
+  const secretKey = identity?.secretKey
+  if (!secretKey) throw new Error('Pear identity is missing secretKey')
+  return b4a.isBuffer(secretKey) ? secretKey : b4a.from(secretKey, 'hex')
+}
+
+export function signStablePayload (identity, payload) {
+  const secretKey = normalizeSecretKey(identity)
+  const body = stableStringify(payload)
+  return b4a.toString(crypto.sign(b4a.from(body), secretKey), 'hex')
+}
+
+export function verifyStablePayload (publicKeyHex, payload, signatureHex) {
+  const body = stableStringify(payload)
+  return crypto.verify(
+    b4a.from(body),
+    b4a.from(signatureHex, 'hex'),
+    b4a.from(publicKeyHex, 'hex')
+  )
+}

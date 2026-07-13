@@ -499,18 +499,20 @@ export default function BetEventScreen() {
             startsAt={game?.startsAt ?? null}
             league={game?.league?.name ?? null}
             ownerId={address ?? null}
-            markets={markets.map((condition) => ({
-              conditionId: condition.conditionId,
-              conditionTitle: condition.title,
-              outcomes: condition.outcomes
-                .filter((o) => o.state === 'Active')
-                .map((o) => ({
-                  outcomeId: o.outcomeId,
-                  title: o.title,
-                  decimalOdds: formatAzuroOdds(o.odds),
-                  rawOdds: o.odds,
-                })),
-            }))}
+            markets={markets
+              .map((condition) => ({
+                conditionId: condition.conditionId,
+                conditionTitle: condition.title,
+                outcomes: condition.outcomes
+                  .filter((o) => o.state === 'Active')
+                  .map((o) => ({
+                    outcomeId: o.outcomeId,
+                    title: o.title,
+                    decimalOdds: formatAzuroOdds(o.odds),
+                    rawOdds: o.odds,
+                  })),
+              }))
+              .filter((market) => market.outcomes.length > 0)}
             onApplyPick={(pick) => {
               const condition = conditions.find((c) => c.conditionId === pick.conditionId)
               const outcome = condition?.outcomes.find((o) => o.outcomeId === pick.outcomeId)

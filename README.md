@@ -209,10 +209,12 @@ thetabet/
 
 **For hackathon reviewers:** expect **~20–40 minutes** on first install (Android SDK + native build). After that, relaunch takes **~2 minutes**.
 
-You need **two terminals** every time you run the app:
+You need **two terminals** when developing on a **USB phone** (or one terminal if Ponder is already running):
 
-1. **Ponder indexer** (vault rankings, tipster stats) — `npm run dev:stack`
-2. **Metro + Android** — `npm run start:clean`
+1. **Ponder + tunnel** (repo root) — `npm run dev:stack:tunnel` — leave running
+2. **Metro** (`apps/mobile`) — `npm run start:clean` — that’s it; open the dev client on the phone
+
+No manual `adb reverse` or `open:android` in the normal loop — `dev:stack:tunnel` sets up Ponder (`42069`) and the Cloudflare URL; Metro binds `localhost:8081` for USB. Use `npm run open:android` only if the app shows a white screen (see [Troubleshooting](#troubleshooting)).
 
 ### What works without extra setup
 
@@ -222,7 +224,7 @@ You need **two terminals** every time you run the app:
 | **Browse football odds** | Azuro markets load from public APIs + Polygon RPC |
 | **Pear public chat / DMs** | Onboarding → **Skip wallet (dev · 0xd3ad)** — no seed phrase, no API keys |
 | **Match AI (QVAC)** | Settings → download a local model (~1–2 GB), then open a match on **Bets** |
-| **Vault rankings UI** | Needs Terminal 1 (`dev:stack`) running |
+| **Vault rankings UI** | Needs Terminal 1 (`dev:stack:tunnel`) running |
 
 ### What needs a whitelisted wallet
 
@@ -325,59 +327,62 @@ npm run open:android
 
 ---
 
-### Path B — Physical Android phone over USB
+### Path B — Physical Android phone over USB (daily dev)
 
-Use this for a real device. **USB + `adb reverse`** is enough for Ponder in most cases. Add the Cloudflare tunnel only if the Profile/vault tab cannot reach the indexer.
+Same two-terminal flow as above. Phone stays plugged in via USB; the dev client is already on the device after the first build.
 
-#### Extra prerequisites
+#### Extra prerequisites (first time only)
 
-- USB debugging enabled, `adb devices` lists the phone
-- **cloudflared** — only for `dev:stack:tunnel` (optional on USB; see below)
+- USB debugging enabled; phone visible in `adb devices`
+- **cloudflared** (for the Ponder tunnel)
 
 ```bash
-# Linux — cloudflared (optional)
+# Linux / WSL2
 curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
 chmod +x cloudflared && sudo mv cloudflared /usr/local/bin/
 ```
 
 **WSL2:** if `adb devices` is empty, attach USB with [usbipd-win](https://github.com/dorssel/usbipd-win) or use `adb.exe` from Windows.
 
+#### First-time build (~15 min)
+
+Same as Path A step 3, but installs to your phone:
+
+```bash
+cd apps/mobile
+npm run bundle:pear
+npm run bundle:qvac
+npx expo prebuild --clean --platform android
+npm run android          # or npm run install:android on slow USB
+```
+
 #### Run (every session)
 
-**Terminal 1** — pick one:
+**Terminal 1** — repo root, leave running:
 
 ```bash
 cd thetabet
-npm run dev:stack              # USB: adb reverse tcp:42069 (try this first)
-# npm run dev:stack:tunnel     # optional: Cloudflare URL → tunnel.generated.ts
+npm run dev:stack:tunnel
 ```
 
-If using the tunnel, wait for `Tunnel URL written: https://….trycloudflare.com` **before** starting Metro.
+Wait for `Tunnel URL written: https://….trycloudflare.com` **before** starting Metro.
 
-**Terminal 2** — Metro + USB:
+**Terminal 2** — Metro only:
 
 ```bash
 cd apps/mobile
-adb devices
-adb reverse tcp:8081 tcp:8081
 npm run start:clean
 ```
 
-**Terminal 3** (or after Metro is up):
+Open or reload the **ThetaBet** dev client on the phone. No other commands needed.
 
-```bash
-cd apps/mobile
-npm run open:android
-```
+| Step | Where | Command |
+|------|--------|---------|
+| 1 | repo root | `npm run dev:stack:tunnel` → wait for tunnel URL |
+| 2 | `apps/mobile` | `npm run start:clean` |
+| 3 | phone | Open / reload the dev client |
 
-| Step | Command |
-|------|---------|
-| 1 | `npm run dev:stack` (or `:tunnel`) — wait until Ponder is ready |
-| 2 | `adb reverse tcp:8081 tcp:8081` |
-| 3 | `npm run start:clean` |
-| 4 | `npm run open:android` |
-
-Large APK install over slow USB: `npm run install:android` instead of `npm run android`.
+`dev:stack:tunnel` also sets `adb reverse tcp:42069` when a device is connected. Metro binds to `localhost:8081` — the dev client picks it up over USB automatically once both terminals are up.
 
 ---
 
@@ -397,8 +402,8 @@ npm run link:bare && npm run android
 
 | Symptom | Fix |
 |---------|-----|
-| White screen after splash | `adb reverse tcp:8081 tcp:8081` → `npm run start:clean` → `npm run open:android` |
-| Profile / vault tab empty | Start Terminal 1 (`npm run dev:stack`); on USB try `dev:stack:tunnel` and reload app |
+| White screen after splash | `npm run open:android` (sets `adb reverse` + deep link), or manually `adb reverse tcp:8081 tcp:8081` then reload |
+| Profile / vault tab empty | Terminal 1 not running — `npm run dev:stack:tunnel`, wait for tunnel URL, reload app |
 | Port 8081 busy | `npm run kill:metro` then `npm run start:clean` |
 | Ponder won't start | `npm run dev:stack:reset` |
 | `ADDON_NOT_FOUND` in logcat | `npm run link:bare` → `npx expo prebuild --clean --platform android` → `npm run android` |

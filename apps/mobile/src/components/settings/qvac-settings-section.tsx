@@ -97,7 +97,6 @@ function DownloadRow({
 export function QvacSettingsSection() {
   const {
     inferenceOptIn,
-    inferenceStatus,
     setInferenceOptIn,
   } = usePearChat()
 
@@ -310,9 +309,6 @@ export function QvacSettingsSection() {
             <Text style={styles.hint}>
               Opt in to answer public match-analysis requests on this phone. Your private notes stay
               here and only the finished analysis and picks are returned.
-            </Text>
-            <Text style={styles.cpuHint}>
-              Status: {inferenceOptIn ? inferenceStatus?.status ?? 'connecting' : 'offline'}
             </Text>
           </View>
           <Switch

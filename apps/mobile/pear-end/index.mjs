@@ -2,6 +2,8 @@ import RPC from 'bare-rpc'
 import { PearChat } from './chat.mjs'
 import { COMMANDS } from './commands.mjs'
 import { repairStoredIdentity } from './identity.mjs'
+import { LOCAL_INFERENCE_PORT, startInferenceTcpBridge } from './inference-local-tcp.mjs'
+import { LOCAL_DM_PORT, startDmTcpBridge } from './dm-local-tcp.mjs'
 import { PeerInference } from './peer-inference.mjs'
 
 const { IPC } = BareKit
@@ -15,6 +17,41 @@ let chat = null
 let peerInference = null
 let rpc = null
 let chatBoot = null
+let inferenceTcpServer = null
+let inferenceTcpListening = false
+let dmTcpServer = null
+let dmTcpListening = false
+
+function syncInferenceTcpBridge (enabled) {
+  if (inferenceTcpServer) {
+    try { inferenceTcpServer.close() } catch (_) {}
+    inferenceTcpServer = null
+    inferenceTcpListening = false
+  }
+  if (!enabled || !peerInference) return
+
+  inferenceTcpServer = startInferenceTcpBridge(peerInference, LOCAL_INFERENCE_PORT, {
+    onListening: () => {
+      inferenceTcpListening = true
+    },
+    onError: () => {
+      inferenceTcpListening = false
+    },
+    onClose: () => {
+      inferenceTcpListening = false
+    },
+  })
+}
+
+function inferenceStatusPayload () {
+  return {
+    ...peerInference.profile(),
+    tcpBridge: inferenceTcpListening,
+    tcpPort: LOCAL_INFERENCE_PORT,
+    dmTcpBridge: dmTcpListening,
+    dmTcpPort: LOCAL_DM_PORT,
+  }
+}
 
 function replyJson (req, value) {
   req.reply(Buffer.from(JSON.stringify(value)))
@@ -23,6 +60,32 @@ function replyJson (req, value) {
 function parsePayload (req) {
   if (!req.data || req.data.length === 0) return {}
   return JSON.parse(req.data.toString())
+}
+
+function syncDmTcpBridge () {
+  if (dmTcpServer) {
+    try { dmTcpServer.close() } catch (_) {}
+    dmTcpServer = null
+    dmTcpListening = false
+  }
+  if (!chat) return
+
+  dmTcpServer = startDmTcpBridge(() => chat, LOCAL_DM_PORT, {
+    onListening: () => {
+      dmTcpListening = true
+    },
+    onError: () => {
+      dmTcpListening = false
+    },
+    onClose: () => {
+      dmTcpListening = false
+    },
+  })
+  chat.dmTcpBroadcast = (frame) => {
+    try {
+      dmTcpServer?.broadcastFrame?.(frame)
+    } catch (_) {}
+  }
 }
 
 async function ensureChat () {
@@ -48,10 +111,10 @@ async function ensureChat () {
         const event = rpc.request(COMMANDS.INFERENCE_PROVIDER_REQUEST_EVENT)
         event.send(Buffer.from(JSON.stringify({ type: 'request', ...request })))
       },
-      onProviderCancel: ({ requestId }) => {
+      onProviderCancel: ({ requestId, reason }) => {
         if (!rpc) return
         const event = rpc.request(COMMANDS.INFERENCE_PROVIDER_REQUEST_EVENT)
-        event.send(Buffer.from(JSON.stringify({ type: 'cancel', requestId })))
+        event.send(Buffer.from(JSON.stringify({ type: 'cancel', requestId, reason })))
       },
       onRequesterEvent: (payload) => {
         if (!rpc) return
@@ -64,6 +127,7 @@ async function ensureChat () {
         event.send(Buffer.from(JSON.stringify(status)))
       },
     })
+    syncDmTcpBridge()
     return chat
   })().catch((error) => {
     chatBoot = null
@@ -153,9 +217,12 @@ async function boot () {
         case COMMANDS.SET_CHAT_AVATAR:
           replyJson(req, await activeChat.setChatAvatar(parsePayload(req)))
           return
-        case COMMANDS.SET_INFERENCE_ENABLED:
-          replyJson(req, await peerInference.setEnabled(parsePayload(req).enabled))
+        case COMMANDS.SET_INFERENCE_ENABLED: {
+          const profile = await peerInference.setEnabled(parsePayload(req).enabled)
+          syncInferenceTcpBridge(Boolean(parsePayload(req).enabled))
+          replyJson(req, inferenceStatusPayload())
           return
+        }
         case COMMANDS.SET_INFERENCE_RUNTIME_BUSY:
           replyJson(req, peerInference.setRuntimeBusy(parsePayload(req).busy))
           return
@@ -176,7 +243,7 @@ async function boot () {
           replyJson(req, { ok: peerInference.cancelRequester(parsePayload(req).requestId) })
           return
         case COMMANDS.GET_INFERENCE_STATUS:
-          replyJson(req, peerInference.profile())
+          replyJson(req, inferenceStatusPayload())
           return
         default:
           replyJson(req, { error: 'Unknown command ' + req.command })

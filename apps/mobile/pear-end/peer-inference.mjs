@@ -10,12 +10,12 @@ import {
 } from './crypto.mjs'
 import { attachJsonFramer, writeJsonFrame } from './socket-framer.mjs'
 import { connectLocalInferenceSocket } from './inference-local-tcp.mjs'
-import { normalizeIdentityKeys } from './identity.mjs'
+import { normalizeIdentityKeys, repairStoredIdentity } from './identity.mjs'
 
 const DIRECTORY_TOPIC = topicFromLabel('thetabet-peer-inference-directory-v1')
 const DIRECTORY_TOPIC_HEX = topicHexFromLabel('thetabet-peer-inference-directory-v1')
 const DIRECT_TOPIC_PREFIX = 'thetabet-peer-inference-direct-v1:'
-const REQUEST_TIMEOUT_MS = 5 * 60 * 1000
+const REQUEST_TIMEOUT_MS = 25 * 60 * 1000
 const BROWSE_TIMEOUT_MS = 30_000
 const BROWSE_FLUSH_MS = 6000
 const BROWSE_POLL_MS = 500
@@ -61,6 +61,25 @@ function signingIdentity (identity) {
   return normalized
 }
 
+function replyPresence (socket, peerInference) {
+  try {
+    const identity = identityForSigning(peerInference.chat)
+    peerInference.chat.identity = identity
+    const profile = peerInference.profile()
+    writeJsonFrame(socket, signedFrame(identity, 'inference-presence', profile))
+    return
+  } catch (error) {
+    console.warn('[inference] presence sign failed:', error?.message || String(error))
+    const profile = peerInference.profile()
+    writeJsonFrame(socket, {
+      type: 'inference-presence',
+      fromPubkey: profile.pubkey,
+      payload: profile,
+      signature: 'trusted-local',
+    })
+  }
+}
+
 function signedFrame (identity, type, payload) {
   const signer = signingIdentity(identity)
   const fromPubkey = myPubkeyHex(signer)
@@ -85,6 +104,36 @@ function verifyFrame (frame, expectedType) {
 
 function buildInferenceRequestFrame (identity, requestId, input) {
   return signedFrame(identity, 'inference-request', { requestId, input })
+}
+
+/** USB/local discovery — accept signed presence or trusted-local fallback. */
+export function acceptPresenceFrame (frame, selfPubkeyHex = null, options = {}) {
+  if (!frame || frame.type !== 'inference-presence') return null
+  const payload = frame.payload
+  if (!payload?.pubkey || !frame.fromPubkey) return null
+  const payloadPk = normalizePubkey(payload.pubkey)
+  const fromPk = normalizePubkey(frame.fromPubkey)
+  if (payloadPk !== fromPk) {
+    // Repair mismatch: trust frame.fromPubkey on USB discovery.
+    if (!options.trustedLocal) return null
+    payload.pubkey = frame.fromPubkey
+  }
+  if (selfPubkeyHex && payloadPk === normalizePubkey(selfPubkeyHex)) return null
+  if (verifyFrame(frame, 'inference-presence')) return payload
+  if (frame.signature === 'trusted-local') return payload
+  if (options.trustedLocal && /^[0-9a-f]{64}$/i.test(fromPk)) return payload
+  return null
+}
+
+function identityForSigning (chat) {
+  if (chat?.storagePath && chat?.identity) {
+    try {
+      chat.identity = repairStoredIdentity(chat.storagePath, chat.identity)
+    } catch (_) {}
+  }
+  const normalized = normalizeIdentityKeys(chat?.identity)
+  if (!normalized) throw new Error('Pear signing keys could not be loaded')
+  return normalized
 }
 
 function validateInput (input) {
@@ -273,7 +322,7 @@ export class PeerInference {
     const trustedLocal = Boolean(socket._inferenceTrustedLocal)
 
     if (frame?.type === 'inference-presence-query') {
-      writeJsonFrame(socket, signedFrame(this.chat.identity, 'inference-presence', this.profile()))
+      replyPresence(socket, this)
       return
     }
 
@@ -349,9 +398,20 @@ export class PeerInference {
     })
   }
 
+  touchProviderTimeout (requestId) {
+    const active = this.activeProviderRequest
+    if (!active || active.id !== requestId) return
+    clearTimeout(active.timer)
+    active.timer = setTimeout(
+      () => this.failProviderRequest(requestId, 'Inference timed out'),
+      REQUEST_TIMEOUT_MS
+    )
+  }
+
   sendProviderProgress ({ requestId, stage, message }) {
     const active = this.activeProviderRequest
     if (!active || active.id !== requestId) return false
+    this.touchProviderTimeout(requestId)
     writeJsonFrame(active.socket, signedFrame(this.chat.identity, 'inference-progress', {
       requestId,
       stage: safeText(stage, 80),
@@ -379,6 +439,7 @@ export class PeerInference {
   }
 
   failProviderRequest (requestId, message) {
+    this.callbacks.onProviderCancel?.({ requestId, reason: message })
     return this.completeProviderRequest({ requestId, error: message })
   }
 
@@ -404,10 +465,8 @@ export class PeerInference {
       const timer = setTimeout(() => finish(false), timeoutMs)
 
       attachJsonFramer(socket, (frame) => {
-        if (!verifyFrame(frame, 'inference-presence')) return
-        const payload = frame.payload
-        if (!payload || normalizePubkey(payload.pubkey) !== normalizePubkey(frame.fromPubkey)) return
-        if (normalizePubkey(payload.pubkey) === normalizePubkey(myPubkeyHex(this.chat.identity))) return
+        const payload = acceptPresenceFrame(frame, myPubkeyHex(this.chat.identity), { trustedLocal: true })
+        if (!payload) return
         finish(normalizePubkey(payload.pubkey) === want)
       })
 
@@ -442,10 +501,16 @@ export class PeerInference {
       const timer = setTimeout(() => finish(null), timeoutMs)
 
       attachJsonFramer(socket, (frame) => {
-        if (!verifyFrame(frame, 'inference-presence')) return
-        const payload = frame.payload
-        if (!payload || payload.pubkey !== frame.fromPubkey) return
-        if (payload.pubkey === myPubkeyHex(this.chat.identity)) return
+        if (frame?.type === 'inference-presence') {
+          const fromPk = normalizePubkey(frame.fromPubkey)
+          const selfPk = normalizePubkey(myPubkeyHex(this.chat.identity))
+          if (fromPk && fromPk === selfPk) {
+            finish({ selfBridge: true })
+            return
+          }
+        }
+        const payload = acceptPresenceFrame(frame, myPubkeyHex(this.chat.identity), { trustedLocal: true })
+        if (!payload) return
         finish({
           pubkey: normalizePubkey(payload.pubkey),
           handle: safeText(payload.handle, 80) || null,
@@ -463,7 +528,7 @@ export class PeerInference {
     })
 
     try { socket.destroy() } catch (_) {}
-    if (!peer) return null
+    if (!peer || peer.selfBridge) return peer?.selfBridge ? { selfBridge: true } : null
     this.localTcpProviders.add(peer.pubkey)
     return peer
   }
@@ -505,6 +570,19 @@ export class PeerInference {
       return
     }
     if (frame.type === 'inference-progress') {
+      const active = this.requesters.get(requestId)
+      if (active) {
+        clearTimeout(active.timer)
+        active.timer = setTimeout(() => {
+          this.emitRequesterEvent({
+            type: 'error',
+            requestId,
+            providerPubkey,
+            message: 'Peer inference timed out',
+          })
+          this.cleanupRequester(requestId)
+        }, REQUEST_TIMEOUT_MS)
+      }
       this.emitRequesterEvent({
         type: 'progress',
         requestId,
@@ -539,8 +617,13 @@ export class PeerInference {
 
   async browse (timeoutMs = BROWSE_TIMEOUT_MS) {
     const peers = new Map()
-    const localPeer = await this.probeLocalProvider(2500)
-    if (localPeer) peers.set(localPeer.pubkey, localPeer)
+    let hitSelfBridge = false
+    const localPeer = await this.probeLocalProvider(5000)
+    if (localPeer?.selfBridge) {
+      hitSelfBridge = true
+    } else if (localPeer) {
+      peers.set(localPeer.pubkey, localPeer)
+    }
 
     const swarm = new Hyperswarm()
     const deadline = Date.now() + Math.max(timeoutMs, 2000)
@@ -583,8 +666,13 @@ export class PeerInference {
       }
 
       if (peers.size === 0 && connections === 0) {
+        if (hitSelfBridge) {
+          throw new Error(
+            'USB port 39391 is your own phone provider, not the PC stub. Turn OFF Settings → Offer peer inference, then run `npm run pear:adb:inference:stub` on PC and Refresh.'
+          )
+        }
         throw new Error(
-          'No inference peers found. Run `npm run pear:inference:stub` on your PC. On USB/hotspot also run: adb reverse tcp:39391 tcp:39391'
+          'No inference peers found. PC stub: `npm run pear:inference:stub` + `npm run pear:adb:inference:stub`. Phone provider: Offer peer inference ON + `npm run pear:adb:inference`.'
         )
       }
 

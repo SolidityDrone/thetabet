@@ -15,6 +15,7 @@ import 'react-native-reanimated';
 import getChainsConfig from '@/config/get-chains-config';
 import { AppModeProvider } from '@/context/app-mode';
 import { PearChatProvider } from '@/context/pear-chat';
+import { PeerInferenceProviderBanner } from '@/components/ai/peer-inference-provider-banner';
 import { ConfirmSheetProvider } from '@/context/confirm-sheet';
 import { Toaster } from 'sonner-native';
 import { colors } from '@/constants/colors';
@@ -72,6 +73,7 @@ export default function RootLayout() {
               <ConfirmSheetProvider>
               <NavigationThemeProvider value={CustomDarkTheme}>
                 <View style={{ flex: 1, backgroundColor: colors.background }}>
+                  <PeerInferenceProviderBanner />
                   <Stack
                     screenOptions={{
                       headerShown: false,

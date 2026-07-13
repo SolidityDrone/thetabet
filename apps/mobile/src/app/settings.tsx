@@ -5,11 +5,10 @@ import { clearAvatar } from '@/config/avatar-options';
 import { useConfirmSheet } from '@/context/confirm-sheet';
 import { resetWalletAddressCache } from '@/services/patch-wdk-service'
 import { useThetaWalletAddress } from '@/hooks/use-theta-wallet-address'
-import useWalletAvatar from '@/hooks/use-wallet-avatar';
 import { useWallet } from '@tetherto/wdk-react-native-provider';
 import * as Clipboard from 'expo-clipboard';
 import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation';
-import { Copy, Camera, ImagePlus, Info, Shield, Trash2, Wallet } from 'lucide-react-native';
+import { Copy, Camera, ImagePlus, Shield, Trash2, Wallet } from 'lucide-react-native';
 import React from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -25,7 +24,6 @@ export default function SettingsScreen() {
   const { confirm } = useConfirmSheet();
   const { wallet, clearWallet } = useWallet();
   const { address: polygonAddress, shortAddress: polygonShortAddress } = useThetaWalletAddress();
-  const avatar = useWalletAvatar();
   const { identity: chatIdentity, setChatAvatar } = usePearChat()
   const [uploadingChatAvatar, setUploadingChatAvatar] = React.useState(false)
   const [avatarCameraVisible, setAvatarCameraVisible] = React.useState(false)
@@ -168,11 +166,6 @@ export default function SettingsScreen() {
             </View>
 
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Icon</Text>
-              <Text style={styles.infoValue}>{avatar}</Text>
-            </View>
-
-            <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Network</Text>
               <Text style={styles.infoValue}>Polygon</Text>
             </View>
@@ -203,26 +196,6 @@ export default function SettingsScreen() {
               </View>
               {polygonAddress ? <Copy size={18} color={colors.primary} /> : null}
             </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* About Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Info size={20} color={colors.primary} />
-            <Text style={styles.sectionTitle}>About</Text>
-          </View>
-
-          <View style={styles.infoCard}>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Version</Text>
-              <Text style={styles.infoValue}>1.0.0</Text>
-            </View>
-
-            <View style={[styles.infoRow, styles.infoRowLast]}>
-              <Text style={styles.infoLabel}>WDK Version</Text>
-              <Text style={styles.infoValue}>Latest</Text>
-            </View>
           </View>
         </View>
 

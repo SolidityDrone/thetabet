@@ -1,106 +1,40 @@
-import { Network, NetworkSelector } from '@/components/NetworkSelector';
-import { assetConfig } from '@/config/assets';
-import { networkConfigs } from '@/config/networks';
-import formatAmount from '@/utils/format-amount';
-import { AssetTicker, useWallet } from '@tetherto/wdk-react-native-provider';
-import { useLocalSearchParams } from 'expo-router';
-import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation';
-import React, { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { FiatCurrency, pricingService } from '@/services/pricing-service';
-import getDisplaySymbol from '@/utils/get-display-symbol';
-import formatTokenAmount from '@/utils/format-token-amount';
-import Header from '@/components/header';
-import { colors } from '@/constants/colors';
+import Header from '@/components/header'
+import { colors } from '@/constants/colors'
+import { networkConfigs } from '@/config/networks'
+import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation'
+import { useLocalSearchParams } from 'expo-router'
+import { useEffect } from 'react'
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { NetworkType } from '@tetherto/wdk-react-native-provider'
 
+/** Legacy route — ThetaBet only sends on Polygon. */
 export default function SelectNetworkScreen() {
-  const insets = useSafeAreaInsets();
-  const router = useDebouncedNavigation();
-  const params = useLocalSearchParams();
-  const { balances } = useWallet();
-  const { tokenId, tokenSymbol, tokenName, scannedAddress } = params as {
-    tokenId: string;
-    tokenSymbol: string;
-    tokenName: string;
-    scannedAddress?: string;
-  };
+  const insets = useSafeAreaInsets()
+  const router = useDebouncedNavigation()
+  const params = useLocalSearchParams<Record<string, string>>()
+  const network = networkConfigs[NetworkType.POLYGON]
 
-  const [networks, setNetworks] = useState<Network[]>([]);
-
-  // Calculate networks with balances and fiat values
   useEffect(() => {
-    const calculateNetworks = async () => {
-      const tokenConfig = assetConfig[tokenId];
-
-      if (!tokenConfig) {
-        setNetworks([]);
-        return;
-      }
-
-      const networksWithBalances = await Promise.all(
-        tokenConfig.supportedNetworks.map(async networkType => {
-          const network = networkConfigs[networkType];
-
-          const balance = balances.list?.find(
-            b => networkType === b.networkType && b.denomination === tokenId
-          );
-
-          const balanceValue = balance ? parseFloat(balance.value) : 0;
-
-          // Calculate fiat value using pricing service
-          const balanceUSD = await pricingService.getFiatValue(
-            balanceValue,
-            tokenId as AssetTicker,
-            FiatCurrency.USD
-          );
-
-          return {
-            ...network,
-            balance: formatTokenAmount(balanceValue, tokenId as AssetTicker, false),
-            balanceFiat: formatAmount(balanceUSD),
-            fiatCurrency: FiatCurrency.USD,
-            token: getDisplaySymbol(tokenId),
-          };
-        })
-      );
-
-      setNetworks(networksWithBalances);
-    };
-
-    calculateNetworks();
-  }, [tokenId, balances.list]);
-
-  const handleSelectNetwork = useCallback(
-    (network: Network) => {
-      router.push({
-        pathname: '/send/details',
-        params: {
-          tokenId,
-          tokenSymbol,
-          tokenName,
-          tokenBalance: network.balance,
-          tokenBalanceUSD: network.balanceFiat,
-          networkName: network.name,
-          networkId: network.id,
-          ...(scannedAddress && { scannedAddress }),
-        },
-      });
-    },
-    [router, tokenId, tokenSymbol, tokenName, scannedAddress]
-  );
+    router.replace({
+      pathname: '/send/details',
+      params: {
+        ...params,
+        networkName: network.name,
+        networkId: network.id,
+      },
+    })
+  }, [network.id, network.name, params, router])
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <Header title="Select network" style={styles.header} />
-
-      <Text style={styles.description}>
-        Select the network you will be using to send {tokenSymbol || tokenName}
-      </Text>
-
-      <NetworkSelector networks={networks} onSelectNetwork={handleSelectNetwork} />
+      <Header title="Send funds" style={styles.header} />
+      <View style={styles.centered}>
+        <ActivityIndicator color={colors.primary} />
+        <Text style={styles.hint}>Opening send on Polygon…</Text>
+      </View>
     </View>
-  );
+  )
 }
 
 const styles = StyleSheet.create({
@@ -111,10 +45,16 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 16,
   },
-  description: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    paddingHorizontal: 20,
-    marginBottom: 24,
+  centered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingHorizontal: 24,
   },
-});
+  hint: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    textAlign: 'center',
+  },
+})

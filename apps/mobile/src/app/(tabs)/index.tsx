@@ -218,7 +218,7 @@ export default function ChannelsScreen() {
       return
     }
     if (!dmHandle.trim()) {
-      Alert.alert('Handle required', 'Enter the on-chain @handle you want to message.')
+      Alert.alert('Handle required', 'Enter the @handle you want to message (Pear or on-chain).')
       return
     }
     setBusy(true)

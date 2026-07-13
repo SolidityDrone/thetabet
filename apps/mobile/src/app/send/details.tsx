@@ -5,6 +5,12 @@ import { useDebouncedNavigation } from '@/hooks/use-debounced-navigation';
 import { RefreshCw } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FiatCurrency, pricingService } from '@/services/pricing-service';
+import { getPolUsdPrice } from '@/services/native-token-price';
+import {
+  isNativeSendToken,
+  isPolygonSendToken,
+  sendPolygonTransfer,
+} from '@/services/polygon-send';
 import { useKeyboard } from '@/hooks/use-keyboard';
 import { colors } from '@/constants/colors';
 import {
@@ -77,6 +83,7 @@ export default function SendDetailsScreen() {
     error?: string;
   } | null>(null);
   const [tokenPrice, setTokenPrice] = useState<number>(0);
+  const [gasPricePol, setGasPricePol] = useState<number>(0);
   const [isAmountInputFocused, setIsAmountInputFocused] = useState(false);
   const keyboard = useKeyboard();
 
@@ -102,10 +109,21 @@ export default function SendDetailsScreen() {
     }
   }, [keyboard.isVisible, isAmountInputFocused]);
 
+  const usesPolygonSend = useMemo(
+    () => getNetworkType(networkId) === getNetworkType('polygon') && isPolygonSendToken(tokenId),
+    [networkId, tokenId]
+  );
+
+  const gasFeeSymbol = usesPolygonSend ? 'POL' : getDisplaySymbol(tokenSymbol);
+
   // Calculate token price using pricing service
   useEffect(() => {
     const calculateTokenPrice = async () => {
       try {
+        if (isNativeSendToken(tokenId)) {
+          setTokenPrice(await getPolUsdPrice());
+          return;
+        }
         const assetTicker = getAssetTicker(tokenId);
         const price = await pricingService.getFiatValue(1, assetTicker, FiatCurrency.USD);
         setTokenPrice(price);
@@ -117,6 +135,11 @@ export default function SendDetailsScreen() {
 
     calculateTokenPrice();
   }, [tokenId]);
+
+  useEffect(() => {
+    if (!usesPolygonSend) return;
+    void getPolUsdPrice().then(setGasPricePol);
+  }, [usesPolygonSend]);
 
   // Helper function to convert amount to token value based on input mode
   const getTokenAmount = useCallback(
@@ -141,13 +164,24 @@ export default function SendDetailsScreen() {
       // Convert amount to token value if provided
       const numericAmount = amountValue ? getTokenAmount(amountValue) : undefined;
 
-      const estimate = await calculateGasFee(networkId, tokenId, numericAmount);
+      const estimate = await calculateGasFee(
+        networkId,
+        tokenId,
+        numericAmount,
+        recipientAddress || undefined
+      );
 
       setGasEstimate(estimate);
       setIsLoadingGasEstimate(false);
     },
-    [networkId, tokenId, getTokenAmount]
+    [networkId, tokenId, getTokenAmount, recipientAddress]
   );
+
+  // Re-estimate when recipient changes on Polygon
+  useEffect(() => {
+    if (!usesPolygonSend || !recipientAddress) return;
+    handleCalculateGasFee(false, amount);
+  }, [amount, handleCalculateGasFee, recipientAddress, usesPolygonSend]);
 
   // Pre-calculate fee when screen loads (skip for BTC as it requires amount)
   useEffect(() => {
@@ -170,9 +204,16 @@ export default function SendDetailsScreen() {
     const interval = setInterval(async () => {
       // Refetch token price
       try {
-        const assetTicker = getAssetTicker(tokenId);
-        const price = await pricingService.getFiatValue(1, assetTicker, FiatCurrency.USD);
-        setTokenPrice(price);
+        if (isNativeSendToken(tokenId)) {
+          setTokenPrice(await getPolUsdPrice());
+        } else {
+          const assetTicker = getAssetTicker(tokenId);
+          const price = await pricingService.getFiatValue(1, assetTicker, FiatCurrency.USD);
+          setTokenPrice(price);
+        }
+        if (usesPolygonSend) {
+          setGasPricePol(await getPolUsdPrice());
+        }
       } catch (error) {
         console.error('Failed to refresh token price:', error);
       }
@@ -185,7 +226,7 @@ export default function SendDetailsScreen() {
     }, 30000); // 30 seconds
 
     return () => clearInterval(interval);
-  }, [tokenId, handleCalculateGasFee, amount]);
+  }, [tokenId, handleCalculateGasFee, amount, usesPolygonSend]);
 
   const handleQRScan = useCallback(() => {
     router.push({
@@ -221,9 +262,8 @@ export default function SendDetailsScreen() {
     const numericBalanceUSD = parseFloat(tokenBalanceUSD.replace(/[$,]/g, ''));
 
     if (inputMode === 'token') {
-      // Subtract gas fee from token balance
       let maxAmount = numericBalance;
-      if (gasEstimate.fee !== undefined) {
+      if (isNativeSendToken(tokenId) && gasEstimate.fee !== undefined) {
         maxAmount = Math.max(0, numericBalance - gasEstimate.fee);
         toast.info('To avoid transaction failure, the max amount has been reduced by the gas fee');
       }
@@ -239,7 +279,7 @@ export default function SendDetailsScreen() {
       setAmount(maxAmountUSD.toFixed(2));
     }
     setAmountError(null);
-  }, [inputMode, tokenBalance, tokenBalanceUSD, gasEstimate.fee, tokenPrice]);
+  }, [inputMode, tokenBalance, tokenBalanceUSD, gasEstimate.fee, tokenPrice, tokenId]);
 
   const toggleInputMode = useCallback(() => {
     setInputMode(prev => (prev === 'token' ? 'fiat' : 'token'));
@@ -340,13 +380,24 @@ export default function SendDetailsScreen() {
 
     try {
       const networkType = getNetworkType(networkId);
-      const assetTicker = getAssetTicker(tokenId);
 
-      // Convert fiat to token amount if in fiat mode
       let numericAmount = parseFloat(amount);
       if (inputMode === 'fiat' && tokenPrice > 0) {
         numericAmount = numericAmount / tokenPrice;
       }
+
+      if (usesPolygonSend) {
+        const sendResult = await sendPolygonTransfer({
+          tokenId,
+          recipientAddress,
+          amount: numericAmount,
+        });
+        setTransactionResult({ txId: { hash: sendResult.hash, fee: sendResult.fee } });
+        setShowConfirmation(true);
+        return;
+      }
+
+      const assetTicker = getAssetTicker(tokenId);
 
       const sendResult = await WDKService.sendByNetwork(
         networkType,
@@ -378,6 +429,7 @@ export default function SendDetailsScreen() {
     refreshWalletBalance,
     inputMode,
     tokenPrice,
+    usesPolygonSend,
   ]);
 
   const handleConfirmSend = useCallback(async () => {
@@ -394,13 +446,18 @@ export default function SendDetailsScreen() {
 
   const getFeeFromTransactionResult = (
     transactionResult: { txId?: { fee: string; hash: string } },
-    token: AssetTicker
+    token: string
   ) => {
     const fee = transactionResult.txId?.fee;
-    if (!fee) return formatTokenAmount(0, token);
+    if (!fee) return formatTokenAmount(0, token as AssetTicker);
 
-    const value = Number(fee) / WDKService.getDenominationValue(token);
-    return formatTokenAmount(value, token);
+    if (usesPolygonSend) {
+      const value = Number(fee) / 1e18;
+      return formatTokenAmount(value, 'pol' as AssetTicker);
+    }
+
+    const value = Number(fee) / WDKService.getDenominationValue(token as AssetTicker);
+    return formatTokenAmount(value, token as AssetTicker);
   };
 
   const getTransactionAmout = useCallback(() => {
@@ -413,8 +470,11 @@ export default function SendDetailsScreen() {
   }, [inputMode, tokenPrice, amount, tokenSymbol]);
 
   const isUseMaxDisabled = useMemo(() => {
+    if (usesPolygonSend) {
+      return gasEstimate.fee === undefined && !!gasEstimate.error;
+    }
     return tokenId.toLowerCase() !== 'btc' && gasEstimate.fee === undefined;
-  }, [tokenId, gasEstimate.fee]);
+  }, [gasEstimate.error, gasEstimate.fee, tokenId, usesPolygonSend]);
 
   return (
     <>
@@ -454,6 +514,7 @@ export default function SendDetailsScreen() {
                 onChangeText={setRecipientAddress}
                 onPaste={handlePasteAddress}
                 onQRScan={handleQRScan}
+                placeholder="0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
               />
 
               <View style={styles.section} onLayout={handleAmountSectionLayout}>
@@ -522,10 +583,10 @@ export default function SendDetailsScreen() {
                 ) : gasEstimate.fee !== undefined ? (
                   <>
                     <Text style={styles.gasAmount}>
-                      {formatTokenAmount(gasEstimate.fee, tokenSymbol as AssetTicker)}
+                      {formatTokenAmount(gasEstimate.fee, gasFeeSymbol as AssetTicker)}
                     </Text>
                     <Text style={styles.gasUsd}>
-                      ≈ {formatUSDValue(gasEstimate.fee * tokenPrice)}
+                      ≈ {formatUSDValue(gasEstimate.fee * (usesPolygonSend ? gasPricePol : tokenPrice))}
                     </Text>
                   </>
                 ) : (
@@ -584,7 +645,7 @@ export default function SendDetailsScreen() {
               <View style={styles.transactionSummary}>
                 <Text style={styles.summaryLabel}>Fee:</Text>
                 <Text style={styles.summaryValue}>
-                  {getFeeFromTransactionResult(transactionResult, tokenSymbol as AssetTicker)}
+                  {getFeeFromTransactionResult(transactionResult, gasFeeSymbol)}
                 </Text>
               </View>
             )}

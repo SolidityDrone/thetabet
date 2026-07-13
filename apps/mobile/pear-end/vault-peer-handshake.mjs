@@ -15,6 +15,7 @@ export function attachVaultPeerHandshake ({
   const known = new Set([writer])
   const sockets = new Set()
   const swarm = new Hyperswarm()
+  const announce = JSON.stringify({ t: 'vault-writer', vault, pk: writer }) + '\n'
 
   function registerRemote (pubkey) {
     const pk = String(pubkey || '').trim().toLowerCase()
@@ -41,9 +42,9 @@ export function attachVaultPeerHandshake ({
       }
     })
 
-    const announce = JSON.stringify({ t: 'vault-writer', vault, pk: writer }) + '\n'
+    const announceLine = announce
     try {
-      socket.write(announce)
+      socket.write(announceLine)
     } catch (_) {}
 
     socket.on('data', (chunk) => {
@@ -79,6 +80,17 @@ export function attachVaultPeerHandshake ({
     client: true,
   })
 
+  const announceTimer = setInterval(() => {
+    for (const socket of sockets) {
+      try { socket.write(announce) } catch (_) {}
+    }
+  }, 8000)
+
+  const refreshTimer = setInterval(() => {
+    if (sockets.size > 0) return
+    discovery.refresh().catch(() => {})
+  }, 12000)
+
   return {
     swarm,
     discovery,
@@ -104,6 +116,8 @@ export function attachVaultPeerHandshake ({
       } catch (_) {}
     },
     destroy () {
+      clearInterval(announceTimer)
+      clearInterval(refreshTimer)
       try {
         swarm.destroy()
       } catch (_) {}

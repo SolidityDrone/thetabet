@@ -61,6 +61,11 @@ function getViemAccount(mnemonic: string, accountIndex = WDK_ACCOUNT_INDEX) {
   return mnemonicToAccount(mnemonic, { path: evmDerivationPath(accountIndex) })
 }
 
+export async function getWalletEvmAddress(accountIndex = WDK_ACCOUNT_INDEX): Promise<Address> {
+  const mnemonic = await resolveWalletMnemonic()
+  return getViemAccount(mnemonic, accountIndex).address
+}
+
 function secp256k1PublicKeyToCoords(publicKey: Hex): { x: Hex; y: Hex } {
   const bytes = hexToBytes(publicKey)
   if (bytes.length !== 65 || bytes[0] !== 0x04) {

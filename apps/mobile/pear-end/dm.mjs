@@ -14,6 +14,11 @@ import {
 } from './crypto.mjs'
 import { attachJsonFramer, writeJsonFrame } from './socket-framer.mjs'
 import { attachRoomTransport } from './room-transport.mjs'
+import {
+  connectLocalDmSocket,
+  deliverContactRequestViaTcp,
+  lookupHandleViaTcp,
+} from './dm-local-tcp.mjs'
 
 const CONTACTS_FILE = 'contacts.json'
 const HANDLE_TOPIC_PREFIX = 'thetabet-handle:'
@@ -144,6 +149,17 @@ export function createDmMixin (chat) {
       const normalized = normalizeHandle(handle)
       if (!normalized) throw new Error('Enter a valid handle')
 
+      try {
+        const socket = await connectLocalDmSocket(3500)
+        try {
+          return await lookupHandleViaTcp(socket, normalized, 5000)
+        } finally {
+          try { socket.destroy() } catch (_) {}
+        }
+      } catch (_) {
+        // USB peer not reachable — try Hyperswarm DHT.
+      }
+
       const topic = topicFromLabel(HANDLE_TOPIC_PREFIX, b4a.from(normalized))
       const discovery = chat.contactSwarm.join(topic, { server: false, client: true })
 
@@ -185,8 +201,40 @@ export function createDmMixin (chat) {
       })
     },
 
-    async sendContactRequest ({ handle, note }) {
-      const peer = await chat.lookupHandle(handle)
+    async sendContactRequest ({ handle, note, pubkey }) {
+      const normalized = normalizeHandle(handle)
+      let peer
+      if (pubkey && /^[0-9a-f]{64}$/i.test(pubkey)) {
+        peer = {
+          handle: normalized || null,
+          pubkey: pubkey.toLowerCase(),
+          avatarData: null,
+        }
+      } else {
+        if (!normalized) throw new Error('Enter a valid handle')
+        peer = await chat.lookupHandle(normalized)
+      }
+
+      try {
+        const local = await deliverContactRequestViaTcp(chat, { peer, note: note || '' })
+        if (local?.accepted) {
+          return { id: local.id, peer }
+        }
+        if (local?.id) {
+          chat.contacts.pendingOutgoing.push({
+            id: local.id,
+            toHandle: peer.handle,
+            toPubkey: peer.pubkey,
+            note: note || '',
+            timestamp: Date.now(),
+          })
+          chat.saveContacts()
+          return { id: local.id, peer }
+        }
+      } catch (_) {
+        // Fall through to DHT delivery.
+      }
+
       const requestId = nowId()
       const fromPubkey = myPubkeyHex(chat.identity)
       const payload = {
@@ -291,12 +339,14 @@ export function createDmMixin (chat) {
         }, 5000)
 
         const onConnection = (socket) => {
-          writeJsonFrame(socket, {
+          const outFrame = {
             type: 'contact-response',
             fromPubkey: myPubkeyHex(chat.identity),
             payload,
             signature,
-          })
+          }
+          writeJsonFrame(socket, outFrame)
+          if (chat.dmTcpBroadcast) chat.dmTcpBroadcast(outFrame)
           clearTimeout(timer)
           chat.contactSwarm.leave(discovery)
           resolve()
@@ -399,6 +449,25 @@ export function createDmMixin (chat) {
         },
       })
 
+      const baseBroadcast = runtime.transport.broadcast.bind(runtime.transport)
+      runtime.transport.broadcast = (message) => {
+        const sent = baseBroadcast(message)
+        if (chat.dmTcpBroadcast) {
+          chat.dmTcpBroadcast({
+            type: 'dm-room-message',
+            roomId: channel.id,
+            message,
+          })
+        }
+        return sent
+      }
+
+      runtime.injectRemoteEnvelope = (envelope) => {
+        if (!envelope?.id || runtime.seen.has(envelope.id)) return
+        runtime.seen.add(envelope.id)
+        core.append(b4a.from(JSON.stringify(envelope))).catch(() => {})
+      }
+
       chat.channels.set(channel.id, runtime)
     },
 
@@ -491,6 +560,13 @@ export function createDmMixin (chat) {
 
       await runtime.core.append(b4a.from(JSON.stringify(envelope)))
       runtime.transport.broadcast(envelope)
+      if (chat.dmTcpBroadcast) {
+        chat.dmTcpBroadcast({
+          type: 'dm-room-message',
+          roomId: dmId,
+          message: envelope,
+        })
+      }
 
       return chat.decodeDmEnvelope(channel, envelope, true)
     },

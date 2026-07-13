@@ -1,4 +1,9 @@
 import { AssetTicker, NetworkType, WDKService } from '@tetherto/wdk-react-native-provider';
+import {
+  estimatePolygonSendFee,
+  isNativeSendToken,
+  isPolygonSendToken,
+} from '@/services/polygon-send';
 
 export interface GasFeeEstimate {
   fee?: number;
@@ -63,10 +68,16 @@ export const getAssetTicker = (tokenId: string): AssetTicker => {
 export const calculateGasFee = async (
   networkId: string,
   tokenId: string,
-  amount?: number
+  amount?: number,
+  recipientAddress?: string
 ): Promise<GasFeeEstimate> => {
   try {
     const networkType = getNetworkType(networkId);
+
+    if (networkType === NetworkType.POLYGON && isPolygonSendToken(tokenId)) {
+      return estimatePolygonSendFee({ tokenId, amount, recipientAddress });
+    }
+
     const assetTicker = getAssetTicker(tokenId);
     // @ts-expect-error
     const quoteRecipient = QUOTE_RECIPIENTS[assetTicker].networks[networkType];

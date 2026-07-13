@@ -28,4 +28,11 @@ export const assetConfig: Record<string, AssetConfig> = {
     color: '#ffffff',
     supportedNetworks: [NetworkType.POLYGON],
   },
+  pol: {
+    name: 'Polygon',
+    symbol: 'POL',
+    icon: require('../../assets/images/chains/polygon-matic-logo.png'),
+    color: '#8247E5',
+    supportedNetworks: [NetworkType.POLYGON],
+  },
 };

@@ -146,7 +146,15 @@ const HITS_PER_SCOUT = 3
 const PAGES_PER_SCOUT = 2
 const PAGE_CHARS = 400
 const SYNTH_MAX_WEB = 1100
-const PREVIEW_TOKENS = 480
+const PREVIEW_TOKENS = 256
+const REWRITE_TOKENS = 160
+const PEER_PREVIEW_TOKENS = 240
+/** Stop synthesis when the model only emits hidden reasoning past this size. */
+const MAX_THINKING_CHARS = 800
+
+function visibleAnalysisChars(body: string): number {
+  return body.replace(/^MAIN:\s*/i, '').trim().length
+}
 
 function formatDiverseCatalog(markets: MatchMarketInput[]): string {
   return formatOutcomeCatalogForPrompt(markets, 6)
@@ -188,7 +196,8 @@ function buildPicksOnlyPrompt(input: MatchScoutInput, intel: WebIntel[]): string
 function buildPreviewPrompt(
   input: MatchScoutInput,
   intel: WebIntel[],
-  picks: MatchPickSuggestion[] = []
+  picks: MatchPickSuggestion[] = [],
+  peerMode = false
 ): string {
   const webBrief = buildCompactWebBrief(intel)
   const sides = parseTeamSides(input.matchTitle)
@@ -233,6 +242,7 @@ function buildPreviewPrompt(
     'REASON3: Longshot only if live odds drift (or NONE).',
     '',
     'Your reply — tagged lines with real sentences only:',
+    'No thinking tags. Start immediately with MAIN: then HOME:/AWAY:/REASON lines.',
     'MAIN:',
     'HOME:',
     'AWAY:',
@@ -408,9 +418,11 @@ async function* waitWithDrain(
  */
 export async function* runMatchScout(
   input: MatchScoutInput,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; peerMode?: boolean }
 ): AsyncGenerator<ScoutEvent> {
   const signal = options?.signal
+  const peerMode = options?.peerMode === true
+  const previewTokens = peerMode ? PEER_PREVIEW_TOKENS : PREVIEW_TOKENS
 
   const queue: ScoutEvent[] = []
   const emit = (e: ScoutEvent) => queue.push(e)
@@ -455,6 +467,7 @@ export async function* runMatchScout(
   let fullAnswer = ''
   let picks: MatchPickSuggestion[] = []
   let lockedEnglishAnalysis = ''
+  let previewVisibleChars = 0
 
   yield { type: 'answer-reset' }
   yield { type: 'activity', message: 'Starting model (CPU)…' }
@@ -463,9 +476,9 @@ export async function* runMatchScout(
     let rawPreviewChars = 0
     let tokenCount = 0
     const streamSanitizer = createStreamSanitizer()
-    for await (const chunk of streamCompletion(buildPreviewPrompt(input, intel), {
-      maxTokens: PREVIEW_TOKENS,
-      temperature: 0.38,
+    for await (const chunk of streamCompletion(buildPreviewPrompt(input, intel, [], peerMode), {
+      maxTokens: previewTokens,
+      temperature: peerMode ? 0.34 : 0.36,
       signal,
       assistantPrefix: 'MAIN: ',
     })) {
@@ -476,12 +489,17 @@ export async function* runMatchScout(
       if (safe) {
         tokenCount += 1
         previewBody += safe
+        previewVisibleChars = visibleAnalysisChars(previewBody)
         yield { type: 'answer-delta', text: safe }
       }
       if (streamSanitizer.isThinking() || (hasThinkingNoise(chunk) && !safe)) {
         yield {
           type: 'activity',
           message: `Model reasoning (hidden) · ${rawPreviewChars} chars`,
+        }
+        if (previewVisibleChars < 40 && rawPreviewChars >= MAX_THINKING_CHARS) {
+          yield { type: 'activity', message: 'Skipping hidden reasoning — using scout summary…' }
+          break
         }
       } else if (tokenCount === 1) {
         yield { type: 'activity', message: 'Streaming analysis…' }
@@ -508,6 +526,8 @@ export async function* runMatchScout(
   if (
     !signal?.aborted &&
     !lockedEnglishAnalysis &&
+    !peerMode &&
+    previewVisibleChars >= 40 &&
     (isGarbageModelOutput(fullAnswer) || !hasSubstantiveAnalysis(fullAnswer, input.matchTitle))
   ) {
     try {
@@ -515,24 +535,27 @@ export async function* runMatchScout(
       yield { type: 'activity', message: 'Rewriting analysis…' }
       let retryBody = ''
       const retrySanitizer = createStreamSanitizer()
+      let retryRawChars = 0
       for await (const chunk of streamCompletion(
         [
-          buildPreviewPrompt(input, intel),
+          buildPreviewPrompt(input, intel, [], peerMode),
           'Rewrite as a tipster preview using scout facts. No URLs. No thinking tags. Never repeat instruction text. MAIN/HOME/AWAY/REASON lines with real sentences only.',
         ].join('\n'),
         {
           assistantPrefix: 'MAIN: ',
-          maxTokens: PREVIEW_TOKENS,
-          temperature: 0.42,
+          maxTokens: REWRITE_TOKENS,
+          temperature: 0.38,
           signal,
         }
       )) {
         if (signal?.aborted) return
         if (!chunk) continue
+        retryRawChars += chunk.length
         const safe = retrySanitizer.feed(chunk)
         if (!safe) continue
         retryBody += safe
         yield { type: 'answer-delta', text: safe }
+        if (visibleAnalysisChars(retryBody) < 40 && retryRawChars >= MAX_THINKING_CHARS) break
       }
       const trimmed = sanitizeModelAnswer(retryBody.trim())
       if (trimmed && !isGarbageModelOutput(trimmed) && hasSubstantiveAnalysis(trimmed, input.matchTitle)) {

@@ -112,6 +112,8 @@ export interface PeerInferencePeer {
   avatarData?: string | null
   status: PeerInferenceStatus
   updatedAt: number
+  tcpBridge?: boolean
+  tcpPort?: number
 }
 
 export interface PeerInferenceRequest {
@@ -123,7 +125,7 @@ export interface PeerInferenceRequest {
 
 export type PeerInferenceProviderEvent =
   | PeerInferenceRequest
-  | { type: 'cancel'; requestId: string }
+  | { type: 'cancel'; requestId: string; reason?: string }
 
 export interface PeerInferenceResult {
   dossier: MatchDossier

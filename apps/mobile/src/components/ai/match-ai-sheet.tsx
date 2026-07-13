@@ -637,7 +637,7 @@ export function MatchAiSheet({
                     <Text style={styles.sourceHint}>
                       {error
                         ? error
-                        : 'No peers found. Run stub on PC, then `adb reverse tcp:39391 tcp:39391` on USB/hotspot, and Refresh.'}
+                        : 'No peers. PC: `npm run pear:inference:stub` then `npm run pear:adb:inference:stub`. Turn OFF Offer peer inference on phone. Refresh.'}
                     </Text>
                   ) : null}
                   {peers.map((peer) => (

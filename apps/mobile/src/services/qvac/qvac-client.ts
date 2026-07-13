@@ -2,6 +2,7 @@ import {
   cancel,
   completion,
   loadModel,
+  state,
   unloadModel,
   VERBOSITY,
 } from '@qvac/sdk'
@@ -69,6 +70,45 @@ let modelId: string | null = null
 let loadedPreset: QvacModelPreset | null = null
 let loadedCtxSize: number | null = null
 let activeRequestId: string | null = null
+let workletWarm = false
+let workletWarming: Promise<void> | null = null
+
+export function formatQvacBootError(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error)
+  const name = error instanceof Error ? error.name : ''
+  if (
+    msg.includes('Could not load bundle') ||
+    name === 'LoadBundleFromServerError' ||
+    name === 'LoadBundleFromServerRequestError'
+  ) {
+    return (
+      'QVAC engine could not start (Metro dev bundle unreachable). ' +
+      'Keep Metro running, reopen the app from the dev client, or run one Local AI analysis on the phone first.'
+    )
+  }
+  return msg
+}
+
+/** Start the QVAC bare worklet without loading a model (cheap peer-provider prep). */
+export async function warmQvacWorklet(): Promise<void> {
+  if (workletWarm) return
+  if (workletWarming) return workletWarming
+
+  workletWarming = (async () => {
+    try {
+      await state()
+      workletWarm = true
+    } catch (error) {
+      throw new Error(formatQvacBootError(error))
+    }
+  })()
+
+  try {
+    await workletWarming
+  } finally {
+    workletWarming = null
+  }
+}
 
 async function ensureModelLoaded(preset: QvacModelPreset, ctxSize: number) {
   const entry = getQvacModelRegistry(preset)
@@ -94,7 +134,7 @@ async function ensureModelLoaded(preset: QvacModelPreset, ctxSize: number) {
       'Model load'
     )
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error)
+    const msg = formatQvacBootError(error)
     if (msg.toLowerCase().includes('no plugin') || msg.toLowerCase().includes('not supported')) {
       throw new Error(
         'QVAC inference engine is not loaded. Re-run `npm run bundle:qvac` to build the full AI worker bundle, then restart the app.'

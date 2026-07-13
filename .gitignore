@@ -23,6 +23,13 @@ apps/mobile/src/config/tunnel.generated.ts
 # Peer local store
 tools/peer/.peer-store/
 
+# Pear console demo local stores (never commit)
+.pear-chat-demo-data/
+apps/mobile/.pear-chat-demo-data/
+apps/mobile/.pear-dm-demo-data/
+apps/mobile/.pear-inference-stub-data/
+apps/mobile/.pear-inference-client-data/
+
 # Ponder local state
 ponder/.ponder/
 ponder/pglite/

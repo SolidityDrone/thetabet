@@ -17,9 +17,6 @@ apps/mobile/pear-end.bundle.mjs
 apps/mobile/.wdk/
 apps/mobile/pear-end/pack.imports.json
 
-# Auto-generated tunnel URL (one-time per machine)
-apps/mobile/src/config/tunnel.generated.ts
-
 # Peer local store
 tools/peer/.peer-store/
 
